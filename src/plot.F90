@@ -37,7 +37,7 @@ contains
     use w90_hamiltonian, only: hamiltonian_get_hr, hamiltonian_write_hr, &
       hamiltonian_setup, hamiltonian_write_rmn, &
       hamiltonian_write_tb, nrpts, irvec, &
-      hamiltonian_write_spnr !jmlihm
+      hamiltonian_get_spnr, hamiltonian_write_spnr !jmlihm
     use w90_ws_distance, only: done_ws_distance, ws_translate_dist, &
       ws_write_vec
 
@@ -78,7 +78,10 @@ contains
       !
       if (write_hr) call hamiltonian_write_hr()
       !
-      if (write_spnr) call hamiltonian_write_spnr()
+      if (write_spnr) then
+        call hamiltonian_get_spnr()
+        call hamiltonian_write_spnr()
+      end if
       !
       if (write_rmn) call hamiltonian_write_rmn()
       !

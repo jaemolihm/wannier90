@@ -137,6 +137,8 @@ module w90_parameters
   logical, public, save :: write_hr
   logical, public, save :: write_rmn
   logical, public, save :: write_tb
+  logical, public, save :: do_write_bin
+  logical, public, save :: do_write_text
   real(kind=dp), public, save :: hr_cutoff
   real(kind=dp), public, save :: dist_cutoff
   character(len=20), public, save :: dist_cutoff_mode
@@ -1402,6 +1404,12 @@ contains
 
     write_tb = .false.
     call param_get_keyword('write_tb', found, l_value=write_tb)
+
+    !jmlihm selectively write text and/or binary output (default is binary)
+    do_write_bin = .true.
+    do_write_text = .false.
+    call param_get_keyword('do_write_bin', found, l_value=do_write_bin)
+    call param_get_keyword('do_write_text', found, l_value=do_write_text)
 
     hr_cutoff = 0.0_dp
     call param_get_keyword('hr_cutoff', found, r_value=hr_cutoff)
@@ -5923,6 +5931,8 @@ contains
     call comms_bcast(write_hr, 1)
     call comms_bcast(write_rmn, 1)
     call comms_bcast(write_tb, 1)
+    call comms_bcast(do_write_bin, 1)
+    call comms_bcast(do_write_text, 1)
     call comms_bcast(hr_cutoff, 1)
     call comms_bcast(dist_cutoff, 1)
     call comms_bcast(dist_cutoff_mode, len(dist_cutoff_mode))

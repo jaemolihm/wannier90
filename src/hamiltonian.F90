@@ -436,15 +436,18 @@ contains
   subroutine hamiltonian_write_hr()
     !============================================!
     !!  Write the Hamiltonian in the WF basis
+! jmlihm: write as binary file, not text file
     !============================================!
 
     use w90_io, only: io_error, io_stopwatch, io_file_unit, &
       seedname, io_date
-    use w90_parameters, only: num_wann, timing_level
+    use w90_parameters, only: num_wann, timing_level, wannier_centres, real_lattice, &
+      do_write_bin, do_write_text
 
     integer            :: i, j, irpt, file_unit
     character(len=33) :: header
     character(len=9)  :: cdate, ctime
+    integer :: reclen
 
     if (hr_written) return
 
@@ -452,27 +455,62 @@ contains
 
     ! write the  whole matrix with all the indices
 
-    file_unit = io_file_unit()
-    open (file_unit, file=trim(seedname)//'_hr.dat', form='formatted', &
-          status='unknown', err=101)
+    ! write text file
+    if (do_write_text) then
+      file_unit = io_file_unit()
+      open (file_unit, file=trim(seedname)//'_hr.dat', form='formatted', &
+            status='unknown', err=101)
 
-    call io_date(cdate, ctime)
-    header = 'written on '//cdate//' at '//ctime
+      call io_date(cdate, ctime)
+      header = 'written on '//cdate//' at '//ctime
 
-    write (file_unit, *) header ! Date and time
-    write (file_unit, *) num_wann
-    write (file_unit, *) nrpts
-    write (file_unit, '(15I5)') (ndegen(i), i=1, nrpts)
-    do irpt = 1, nrpts
-      do i = 1, num_wann
-        do j = 1, num_wann
-          write (file_unit, '(5I5,2F12.6)') irvec(:, irpt), j, i, &
-            ham_r(j, i, irpt)
+      write (file_unit, *) header ! Date and time
+      write (file_unit, *) num_wann
+      write (file_unit, *) nrpts
+      write (file_unit, '(15I5)') (ndegen(i), i=1, nrpts)
+      do irpt = 1, nrpts
+        do i = 1, num_wann
+          do j = 1, num_wann
+            write (file_unit, '(5I5,2F12.6)') irvec(:, irpt), j, i, &
+              ham_r(j, i, irpt)
+          end do
         end do
       end do
-    end do
+    end if
 
-    close (file_unit)
+    ! write binary file
+    if (do_write_bin) then
+      file_unit = io_file_unit()
+      inquire (iolength=reclen) ndegen(:)
+      open (file_unit, file=trim(seedname)//'_ndegen.bin', form='unformatted', &
+            status='unknown', access='direct', recl=reclen, err=101)
+      write (file_unit, rec=1) ndegen
+      close (file_unit)
+
+      inquire (iolength=reclen) irvec(:, :)
+      open (file_unit, file=trim(seedname)//'_irvec.bin', form='unformatted', &
+            status='unknown', access='direct', recl=reclen, err=101)
+      write (file_unit, rec=1) irvec
+      close (file_unit)
+
+      inquire (iolength=reclen) ham_r(:, :, :)
+      open (file_unit, file=trim(seedname)//'_hr.bin', form='unformatted', &
+            status='unknown', access='direct', recl=reclen, err=101)
+      write (file_unit, rec=1) ham_r
+      close (file_unit)
+
+      inquire (iolength=reclen) wannier_centres(:, :)
+      open (file_unit, file=trim(seedname)//'_wcenter.bin', form='unformatted', &
+            status='unknown', access='direct', recl=reclen, err=101)
+      write (file_unit, rec=1) wannier_centres
+      close (file_unit)
+
+      inquire (iolength=reclen) real_lattice(:, :)
+      open (file_unit, file=trim(seedname)//'_reallatt.bin', form='unformatted', &
+            status='unknown', access='direct', recl=reclen, err=101)
+      write (file_unit, rec=1) real_lattice
+      close (file_unit)
+    end if
 
     hr_written = .true.
 

@@ -264,7 +264,7 @@ contains
 
     use w90_io, only: io_error, io_stopwatch, io_file_unit, &
       seedname, io_date
-    use w90_parameters, only: num_wann
+    use w90_parameters, only: num_wann, do_write_text, do_write_bin
 
     implicit none
 
@@ -273,46 +273,68 @@ contains
     integer:: irpt, iw, jw, ideg, file_unit
     character(len=100) :: header
     character(len=9)  :: cdate, ctime
+    integer :: reclen
 
-    file_unit = io_file_unit()
-    call io_date(cdate, ctime)
+    if (do_write_bin) then
+      if (use_ws_distance) then
+        file_unit = io_file_unit()
 
-    open (file_unit, file=trim(seedname)//'_wsvec.dat', form='formatted', &
-          status='unknown', err=101)
+        inquire (iolength=reclen) wdist_ndeg
+        open (file_unit, file=trim(seedname)//'_wdist_ndeg.bin', form='unformatted', &
+              status='unknown', access='direct', recl=reclen)
+        write (file_unit, rec=1) wdist_ndeg
+        close (file_unit)
 
-    if (use_ws_distance) then
-      header = '## written on '//cdate//' at '//ctime//' with use_ws_distance=.true.'
-      write (file_unit, '(A)') trim(header)
+        inquire (iolength=reclen) irdist_ws
+        open (file_unit, file=trim(seedname)//'_irdist_ws.bin', form='unformatted', &
+              status='unknown', access='direct', recl=reclen)
+        write (file_unit, rec=1) irdist_ws
+        close (file_unit)
+      end if
+    end if
 
-      do irpt = 1, nrpts
-        do iw = 1, num_wann
-          do jw = 1, num_wann
-            write (file_unit, '(5I5)') irvec(:, irpt), iw, jw
-            write (file_unit, '(I5)') wdist_ndeg(iw, jw, irpt)
-            do ideg = 1, wdist_ndeg(iw, jw, irpt)
-              write (file_unit, '(5I5,2F12.6,I5)') irdist_ws(:, ideg, iw, jw, irpt) - &
-                irvec(:, irpt)
+    if (do_write_text) then
+      file_unit = io_file_unit()
+      call io_date(cdate, ctime)
+
+      open (file_unit, file=trim(seedname)//'_wsvec.dat', form='formatted', &
+            status='unknown', err=101)
+
+      if (use_ws_distance) then
+        header = '## written on '//cdate//' at '//ctime//' with use_ws_distance=.true.'
+        write (file_unit, '(A)') trim(header)
+
+        do irpt = 1, nrpts
+          do iw = 1, num_wann
+            do jw = 1, num_wann
+              write (file_unit, '(5I5)') irvec(:, irpt), iw, jw
+              write (file_unit, '(I5)') wdist_ndeg(iw, jw, irpt)
+              do ideg = 1, wdist_ndeg(iw, jw, irpt)
+                write (file_unit, '(5I5,2F12.6,I5)') irdist_ws(:, ideg, iw, jw, irpt) - &
+                  irvec(:, irpt)
+              end do
             end do
           end do
         end do
-      end do
-    else
-      header = '## written on '//cdate//' at '//ctime//' with use_ws_distance=.false.'
-      write (file_unit, '(A)') trim(header)
+      else
+        header = '## written on '//cdate//' at '//ctime//' with use_ws_distance=.false.'
+        write (file_unit, '(A)') trim(header)
 
-      do irpt = 1, nrpts
-        do iw = 1, num_wann
-          do jw = 1, num_wann
-            write (file_unit, '(5I5)') irvec(:, irpt), &
-              iw, jw
-            write (file_unit, '(I5)') 1
-            write (file_unit, '(3I5)') 0, 0, 0
+        do irpt = 1, nrpts
+          do iw = 1, num_wann
+            do jw = 1, num_wann
+              write (file_unit, '(5I5)') irvec(:, irpt), &
+                iw, jw
+              write (file_unit, '(I5)') 1
+              write (file_unit, '(3I5)') 0, 0, 0
+            end do
           end do
         end do
-      end do
+      end if
+
+      close (file_unit)
     end if
 
-    close (file_unit)
     return
 
 101 call io_error('Error: ws_write_vec: problem opening file '//trim(seedname)//'_ws_vec.dat')

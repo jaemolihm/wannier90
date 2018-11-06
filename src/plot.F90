@@ -32,10 +32,12 @@ contains
     use w90_parameters, only: num_kpts, bands_plot, dos_plot, &
       kpt_latt, fermi_surface_plot, &
       wannier_plot, timing_level, write_bvec, &
-      write_hr, write_rmn, write_tb, write_u_matrices
+      write_hr, write_rmn, write_tb, write_u_matrices, &
+      write_spnr !jmlihm
     use w90_hamiltonian, only: hamiltonian_get_hr, hamiltonian_write_hr, &
       hamiltonian_setup, hamiltonian_write_rmn, &
-      hamiltonian_write_tb, nrpts, irvec
+      hamiltonian_write_tb, nrpts, irvec, &
+      hamiltonian_write_spnr !jmlihm
     use w90_ws_distance, only: done_ws_distance, ws_translate_dist, &
       ws_write_vec
 
@@ -75,6 +77,8 @@ contains
       if (fermi_surface_plot) call plot_fermi_surface
       !
       if (write_hr) call hamiltonian_write_hr()
+      !
+      if (write_spnr) call hamiltonian_write_spnr()
       !
       if (write_rmn) call hamiltonian_write_rmn()
       !

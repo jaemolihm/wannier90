@@ -43,6 +43,9 @@ module w90_hamiltonian
   !
   real(kind=dp), public, save, allocatable :: wannier_centres_translated(:, :)
   !! translated Wannier centres
+  !
+  complex(kind=dp), public, save, allocatable :: spn_r(:, :, :, :) !jmlihm
+  !! Hamiltonian matrix in WF representation
 
   public :: hamiltonian_get_hr
   public :: hamiltonian_write_hr
@@ -50,6 +53,8 @@ module w90_hamiltonian
   public :: hamiltonian_dealloc
   public :: hamiltonian_write_rmn
   public :: hamiltonian_write_tb
+  public :: hamiltonian_get_spnr !jmlihm
+  public :: hamiltonian_write_spnr !jmlihm
 
   ! Module variables
   logical, save :: ham_have_setup = .false.
@@ -59,6 +64,7 @@ module w90_hamiltonian
   logical, save :: have_ham_k = .false.
   logical, save :: hr_written = .false.
   logical, save :: tb_written = .false.
+  logical, save :: spnr_written = .false. !jmlihm
 
   complex(kind=dp), save, allocatable :: ham_k(:, :, :)
 
@@ -807,5 +813,337 @@ contains
                   //trim(seedname)//'_tb.dat')
 
   end subroutine hamiltonian_write_tb
+
+  !============================================!
+  subroutine hamiltonian_get_spnr()  ! jmlihm
+    !============================================!
+    !                                            !
+    !!  Calculate the Pauli matrices in the WF basis
+    !                                            !
+    !============================================!
+    use w90_constants, only: dp, pi, cmplx_0
+    use w90_parameters, only: num_wann, ndimwin, num_kpts, num_bands, &
+      timing_level, have_disentangled, spn_formatted, lsitesymmetry
+    use w90_io, only: io_error, io_stopwatch, stdout, seedname, &
+      io_file_unit
+
+    implicit none
+
+    complex(kind=dp), allocatable :: spn_o(:, :, :, :), spn_q(:, :, :, :), spn_temp(:, :)
+    real(kind=dp)                 :: s_real, s_img
+    integer, allocatable          :: num_states(:)
+    integer                       :: i, j, ii, jj, m, n, spn_in, ik, is, &
+                                     winmin, nb_tmp, nkp_tmp, ierr, s, counter
+    character(len=60)             :: header
+
+    if (lsitesymmetry) then
+      if (on_root) write (stdout, '(1x,a)') &
+        'hamiltonian_get_spnr not implemented for symmetry-adapted WF'
+      return
+    end if
+
+    if (timing_level > 1) call io_stopwatch('hamiltonian: get_spnr', 1)
+
+    if (.not. allocated(spn_r)) then
+      allocate (spn_r(num_wann, num_wann, nrpts, 3))
+    else
+      return ! been here before
+    end if
+
+    allocate (spn_o(num_bands, num_bands, num_kpts, 3))
+    allocate (spn_q(num_wann, num_wann, num_kpts, 3))
+
+    allocate (num_states(num_kpts))
+    do ik = 1, num_kpts
+      if (have_disentangled) then
+        num_states(ik) = ndimwin(ik)
+      else
+        num_states(ik) = num_wann
+      endif
+    enddo
+
+    ! Read from .spn file the original spin matrices <psi_nk|sigma_i|psi_mk>
+    ! (sigma_i = Pauli matrix) between ab initio eigenstates
+    !
+    spn_in = io_file_unit()
+    if (spn_formatted) then
+      open (unit=spn_in, file=trim(seedname)//'.spn', form='formatted', &
+            status='old', err=109)
+      write (stdout, '(/a)', advance='no') &
+        ' Reading spin matrices from '//trim(seedname)//'.spn in hamiltonian_get_spnr : '
+      read (spn_in, *, err=110, end=110) header
+      write (stdout, '(a)') trim(header)
+      read (spn_in, *, err=110, end=110) nb_tmp, nkp_tmp
+    else
+      open (unit=spn_in, file=trim(seedname)//'.spn', form='unformatted', &
+            status='old', err=109)
+      write (stdout, '(/a)', advance='no') &
+        ' Reading spin matrices from '//trim(seedname)//'.spn in hamiltonian_get_spnr : '
+      read (spn_in, err=110, end=110) header
+      write (stdout, '(a)') trim(header)
+      read (spn_in, err=110, end=110) nb_tmp, nkp_tmp
+    endif
+    if (nb_tmp .ne. num_bands) &
+      call io_error(trim(seedname)//'.spn has wrong number of bands')
+    if (nkp_tmp .ne. num_kpts) &
+      call io_error(trim(seedname)//'.spn has wrong number of k-points')
+    if (spn_formatted) then
+      do ik = 1, num_kpts
+        do m = 1, num_bands
+          do n = 1, m
+            read (spn_in, *, err=110, end=110) s_real, s_img
+            spn_o(n, m, ik, 1) = cmplx(s_real, s_img, dp)
+            read (spn_in, *, err=110, end=110) s_real, s_img
+            spn_o(n, m, ik, 2) = cmplx(s_real, s_img, dp)
+            read (spn_in, *, err=110, end=110) s_real, s_img
+            spn_o(n, m, ik, 3) = cmplx(s_real, s_img, dp)
+            ! Read upper-triangular part, now build the rest
+            spn_o(m, n, ik, 1) = conjg(spn_o(n, m, ik, 1))
+            spn_o(m, n, ik, 2) = conjg(spn_o(n, m, ik, 2))
+            spn_o(m, n, ik, 3) = conjg(spn_o(n, m, ik, 3))
+          end do
+        end do
+      enddo
+    else
+      allocate (spn_temp(3, (num_bands*(num_bands + 1))/2), stat=ierr)
+      if (ierr /= 0) call io_error('Error in allocating spm_temp in hamiltonian_get_spnr')
+      do ik = 1, num_kpts
+        read (spn_in) ((spn_temp(s, m), s=1, 3), m=1, (num_bands*(num_bands + 1))/2)
+        counter = 0
+        do m = 1, num_bands
+          do n = 1, m
+            counter = counter + 1
+            spn_o(n, m, ik, 1) = spn_temp(1, counter)
+            spn_o(m, n, ik, 1) = conjg(spn_temp(1, counter))
+            spn_o(n, m, ik, 2) = spn_temp(2, counter)
+            spn_o(m, n, ik, 2) = conjg(spn_temp(2, counter))
+            spn_o(n, m, ik, 3) = spn_temp(3, counter)
+            spn_o(m, n, ik, 3) = conjg(spn_temp(3, counter))
+          end do
+        end do
+      end do
+      deallocate (spn_temp, stat=ierr)
+      if (ierr /= 0) call io_error('Error in deallocating spm_temp in hamiltonian_get_spnr')
+    endif
+
+    close (spn_in)
+
+    ! Transform to projected subspace, Wannier gauge
+    !
+    spn_q(:, :, :, :) = cmplx_0
+    do ik = 1, num_kpts
+      do is = 1, 3
+        call get_gauge_overlap_matrix( &
+          ik, num_states(ik), &
+          ik, num_states(ik), &
+          spn_o(:, :, ik, is), spn_q(:, :, ik, is))
+      enddo !is
+    enddo !ik
+
+    call fourier_q_to_R(spn_q(:, :, :, 1), spn_r(:, :, :, 1))
+    call fourier_q_to_R(spn_q(:, :, :, 2), spn_r(:, :, :, 2))
+    call fourier_q_to_R(spn_q(:, :, :, 3), spn_r(:, :, :, 3))
+
+    call hamiltonian_write_spnr()
+
+    if (timing_level > 1 .and. on_root) call io_stopwatch('hamiltonian: get_spnr', 2)
+    return
+
+109 call io_error &
+      ('Error: Problem opening input file '//trim(seedname)//'.spn')
+110 call io_error &
+      ('Error: Problem reading input file '//trim(seedname)//'.spn')
+  contains
+
+    !==========================================================
+    subroutine get_gauge_overlap_matrix(ik_a, ns_a, ik_b, ns_b, S_o, S, H)
+      !==========================================================
+      !
+      ! Wannier-gauge overlap matrix S in the projected subspace
+      !
+      ! TODO: Update this documentation of this routine and
+      ! possibliy give it a better name. The routine has been
+      ! generalized multiple times.
+      !
+      !==========================================================
+
+      use w90_constants, only: dp, cmplx_0
+      use w90_parameters, only: num_wann, eigval, u_matrix_opt, u_matrix
+      use w90_utility, only: utility_zgemmm
+      complex(kind=dp), allocatable :: v_matrix(:, :, :)
+
+      integer, intent(in) :: ik_a, ns_a, ik_b, ns_b
+
+      complex(kind=dp), dimension(:, :), intent(in)            :: S_o
+      complex(kind=dp), dimension(:, :), intent(out), optional :: S, H
+
+      integer :: wm_a, wm_b
+      integer :: loop_kpt, j, m, i
+
+      allocate (v_matrix(num_bands, num_wann, num_kpts), stat=ierr)
+      if (ierr /= 0) &
+        call io_error('Error allocating v_matrix in hamiltonian_get_spnr private subroutine')
+      ! u_matrix and u_matrix_opt are stored on root only
+      if (.not. have_disentangled) then
+        v_matrix = u_matrix
+      else
+        v_matrix = cmplx_0
+        do loop_kpt = 1, num_kpts
+          do j = 1, num_wann
+            do m = 1, ndimwin(loop_kpt)
+              do i = 1, num_wann
+                v_matrix(m, j, loop_kpt) = v_matrix(m, j, loop_kpt) &
+                                           + u_matrix_opt(m, i, loop_kpt)*u_matrix(i, j, loop_kpt)
+              enddo
+            enddo
+          enddo
+        enddo
+      endif
+
+      call get_win_min(ik_a, wm_a)
+      call get_win_min(ik_b, wm_b)
+
+      call utility_zgemmm(v_matrix(1:ns_a, 1:num_wann, ik_a), 'C', &
+                          S_o(wm_a:wm_a + ns_a - 1, wm_b:wm_b + ns_b - 1), 'N', &
+                          v_matrix(1:ns_b, 1:num_wann, ik_b), 'N', &
+                          S, eigval(wm_a:wm_a + ns_a - 1, ik_a), H)
+    end subroutine get_gauge_overlap_matrix
+
+    !=========================================================!
+    subroutine fourier_q_to_R(op_q, op_R)
+      !==========================================================
+      !
+      !! Fourier transforms Wannier-gauge representation
+      !! of a given operator O from q-space to R-space:
+      !!
+      !! O_ij(q) --> O_ij(R) = (1/N_kpts) sum_q e^{-iqR} O_ij(q)
+      !
+      !==========================================================
+
+      use w90_constants, only: dp, cmplx_0, cmplx_i, twopi
+      use w90_parameters, only: num_kpts, kpt_latt
+
+      implicit none
+
+      ! Arguments
+      !
+      complex(kind=dp), dimension(:, :, :), intent(in)  :: op_q
+      !! Operator in q-space
+      complex(kind=dp), dimension(:, :, :), intent(out) :: op_R
+      !! Operator in R-space
+
+      integer          :: ir, ik
+      real(kind=dp)    :: rdotq
+      complex(kind=dp) :: phase_fac
+
+      op_R = cmplx_0
+      do ir = 1, nrpts
+        do ik = 1, num_kpts
+          rdotq = twopi*dot_product(kpt_latt(:, ik), irvec(:, ir))
+          phase_fac = exp(-cmplx_i*rdotq)
+          op_R(:, :, ir) = op_R(:, :, ir) + phase_fac*op_q(:, :, ik)
+        enddo
+      enddo
+      op_R = op_R/real(num_kpts, dp)
+
+    end subroutine fourier_q_to_R
+
+    !===============================================
+    subroutine get_win_min(ik, win_min)
+      !===============================================
+      !
+      !! Find the lower bound (band index) of the
+      !! outer energy window at the specified k-point
+      !
+      !===============================================
+
+      use w90_constants, only: dp
+      use w90_parameters, only: num_bands, lwindow, have_disentangled
+
+      implicit none
+
+      ! Arguments
+      !
+      integer, intent(in)  :: ik
+      !! Index of the required k-point
+      integer, intent(out) :: win_min
+      !! Index of the lower band of the outer energy window
+
+      integer :: j
+
+      if (.not. have_disentangled) then
+        win_min = 1
+        return
+      endif
+
+      do j = 1, num_bands
+        if (lwindow(j, ik)) then
+          win_min = j
+          exit
+        end if
+      end do
+
+    end subroutine get_win_min
+  end subroutine hamiltonian_get_spnr
+
+  !============================================!
+  subroutine hamiltonian_write_spnr() ! jmlihm
+    !============================================!
+    !!  Write the Pauli matrices in the WF basis
+    !============================================!
+
+    use w90_io, only: io_error, io_stopwatch, io_file_unit, &
+      seedname, io_date
+    use w90_parameters, only: num_wann, timing_level, do_write_bin, do_write_text
+    integer            :: i, j, irpt, file_unit
+    character(len=33) :: header
+    character(len=9)  :: cdate, ctime
+    integer :: reclen
+
+    if (spnr_written) return
+
+    if (timing_level > 1) call io_stopwatch('hamiltonian: write_spnr', 1)
+
+    ! write the whole matrix with all the indices
+
+    if (do_write_bin) then
+      file_unit = io_file_unit()
+      inquire (iolength=reclen) spn_r(:, :, :, :)
+      open (file_unit, file=trim(seedname)//'_spnr.bin', form='unformatted', &
+            status='unknown', access='direct', recl=reclen, err=111)
+      write (file_unit, rec=1) spn_r
+      close (file_unit)
+    end if
+
+    if (do_write_text) then
+      file_unit = io_file_unit()
+      open (file_unit, file=trim(seedname)//'_spnr.dat', form='formatted', &
+            status='unknown', err=112)
+      call io_date(cdate, ctime)
+      header = 'written on '//cdate//' at '//ctime
+      write (file_unit, *) header ! Date and time
+      write (file_unit, *) num_wann
+      write (file_unit, *) nrpts
+      write (file_unit, '(15I5)') (ndegen(i), i=1, nrpts)
+      do irpt = 1, nrpts
+        do i = 1, num_wann
+          do j = 1, num_wann
+            write (file_unit, '(5I5,6F12.6)') irvec(:, irpt), j, i, &
+              spn_r(j, i, irpt, 1), spn_r(j, i, irpt, 2), spn_r(j, i, irpt, 3)
+          end do
+        end do
+      end do
+      close (file_unit)
+    end if
+
+    spnr_written = .true.
+    if (timing_level > 1) call io_stopwatch('hamiltonian: write_spnr', 2)
+
+    return
+
+111 call io_error('Error: hamiltonian_write_spnr: problem opening file '//trim(seedname)//'_spnr.bin')
+112 call io_error('Error: hamiltonian_write_spnr: problem opening file '//trim(seedname)//'_spnr.dat')
+
+  end subroutine hamiltonian_write_spnr
 
 end module w90_hamiltonian

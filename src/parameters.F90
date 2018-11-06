@@ -137,8 +137,9 @@ module w90_parameters
   logical, public, save :: write_hr
   logical, public, save :: write_rmn
   logical, public, save :: write_tb
-  logical, public, save :: do_write_bin
-  logical, public, save :: do_write_text
+  logical, public, save :: write_spnr !jmlihm
+  logical, public, save :: do_write_bin !jmlihm
+  logical, public, save :: do_write_text !jmlihm
   real(kind=dp), public, save :: hr_cutoff
   real(kind=dp), public, save :: dist_cutoff
   character(len=20), public, save :: dist_cutoff_mode
@@ -1404,6 +1405,12 @@ contains
 
     write_tb = .false.
     call param_get_keyword('write_tb', found, l_value=write_tb)
+
+    !jmlihm write Pauli matrices in the WF basis
+    write_spnr = .false.
+    call param_get_keyword('write_spnr', found, l_value=write_spnr)
+    if (write_spnr .and. (.not. spinors)) &
+      call io_error('Error: if not spinors, write_spnr cannot be set to true')
 
     !jmlihm selectively write text and/or binary output (default is binary)
     do_write_bin = .true.
@@ -2722,7 +2729,7 @@ contains
     ! Plotting
     !
     if (wannier_plot .or. bands_plot .or. fermi_surface_plot .or. kslice &
-        .or. dos_plot .or. write_hr .or. iprint > 2) then
+        .or. dos_plot .or. write_hr .or. write_spnr .or. iprint > 2) then
       !
       write (stdout, '(1x,a78)') '*-------------------------------- PLOTTING ----------------------------------*'
       !
@@ -5931,6 +5938,7 @@ contains
     call comms_bcast(write_hr, 1)
     call comms_bcast(write_rmn, 1)
     call comms_bcast(write_tb, 1)
+    call comms_bcast(write_spnr, 1)
     call comms_bcast(do_write_bin, 1)
     call comms_bcast(do_write_text, 1)
     call comms_bcast(hr_cutoff, 1)

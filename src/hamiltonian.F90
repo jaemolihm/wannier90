@@ -482,6 +482,7 @@ contains
           end do
         end do
       end do
+      close (file_unit)
     end if
 
     ! write binary file

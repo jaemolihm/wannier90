@@ -1649,6 +1649,7 @@ contains
 
     use w90_parameters, only: num_bands, num_kpts, num_wann, have_disentangled, &
       kpt_latt, u_matrix, u_matrix_opt
+    use w90_parameters, only: do_write_bin, do_write_text !jmlihm
     use w90_io, only: io_error, stdout, io_file_unit, seedname, &
       io_time, io_stopwatch, io_date
 
@@ -1657,34 +1658,60 @@ contains
     integer             :: i, j, nkp
     character(len=33)  :: header
     character(len=9)   :: cdate, ctime
+    integer :: file_unit, reclen
 
-    call io_date(cdate, ctime)
-    header = 'written on '//cdate//' at '//ctime
+    if (do_write_bin) then
+      file_unit = io_file_unit()
+      inquire (iolength=reclen) u_matrix
+      open (file_unit, file=trim(seedname)//'_u_matrix.bin', form='unformatted', &
+            status='unknown', access='direct', recl=reclen)
+      write (file_unit, rec=1) u_matrix
+      close (file_unit)
 
-    matunit = io_file_unit()
-    open (matunit, file=trim(seedname)//'_u.mat', form='formatted')
+      if (have_disentangled) then
+        inquire (iolength=reclen) u_matrix_opt
+        open (file_unit, file=trim(seedname)//'_u_matrix_opt.bin', form='unformatted', &
+              status='unknown', access='direct', recl=reclen)
+        write (file_unit, rec=1) u_matrix_opt
+        close (file_unit)
+      end if
 
-    write (matunit, *) header
-    write (matunit, *) num_kpts, num_wann, num_wann
+      inquire (iolength=reclen) kpt_latt
+      open (file_unit, file=trim(seedname)//'_kpt_latt.bin', form='unformatted', &
+            status='unknown', access='direct', recl=reclen)
+      write (file_unit, rec=1) kpt_latt
+      close (file_unit)
+    end if
 
-    do nkp = 1, num_kpts
-      write (matunit, *)
-      write (matunit, '(f15.10,sp,f15.10,sp,f15.10)') kpt_latt(:, nkp)
-      write (matunit, '(f15.10,sp,f15.10)') ((u_matrix(i, j, nkp), i=1, num_wann), j=1, num_wann)
-    end do
-    close (matunit)
+    if (do_write_text) then
+      call io_date(cdate, ctime)
+      header = 'written on '//cdate//' at '//ctime
 
-    if (have_disentangled) then
       matunit = io_file_unit()
-      open (matunit, file=trim(seedname)//'_u_dis.mat', form='formatted')
+      open (matunit, file=trim(seedname)//'_u.mat', form='formatted')
+
       write (matunit, *) header
-      write (matunit, *) num_kpts, num_wann, num_bands
+      write (matunit, *) num_kpts, num_wann, num_wann
+
       do nkp = 1, num_kpts
         write (matunit, *)
         write (matunit, '(f15.10,sp,f15.10,sp,f15.10)') kpt_latt(:, nkp)
-        write (matunit, '(f15.10,sp,f15.10)') ((u_matrix_opt(i, j, nkp), i=1, num_bands), j=1, num_wann)
+        write (matunit, '(f15.10,sp,f15.10)') ((u_matrix(i, j, nkp), i=1, num_wann), j=1, num_wann)
       end do
       close (matunit)
+
+      if (have_disentangled) then
+        matunit = io_file_unit()
+        open (matunit, file=trim(seedname)//'_u_dis.mat', form='formatted')
+        write (matunit, *) header
+        write (matunit, *) num_kpts, num_wann, num_bands
+        do nkp = 1, num_kpts
+          write (matunit, *)
+          write (matunit, '(f15.10,sp,f15.10,sp,f15.10)') kpt_latt(:, nkp)
+          write (matunit, '(f15.10,sp,f15.10)') ((u_matrix_opt(i, j, nkp), i=1, num_bands), j=1, num_wann)
+        end do
+        close (matunit)
+      endif
     endif
 
   end subroutine plot_u_matrices

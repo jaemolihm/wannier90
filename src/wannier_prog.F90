@@ -173,7 +173,8 @@ program wannier
         goto 1001         ! go to wann_main
       elseif (checkpoint .eq. 'postwann') then
         if (on_root) write (stdout, '(a/)') 'from plotting ...'
-        goto 2002         ! go to plot_main
+!        goto 2002         ! go to plot_main
+        goto 1001         ! go to wann_main !jmlihm restart from wann_main
       else
         if (on_root) write (stdout, '(/a/)')
         call io_error('Value of checkpoint not recognised in wann_prog')

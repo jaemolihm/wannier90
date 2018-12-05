@@ -3660,10 +3660,13 @@ contains
       ! lwindow, ndimwin and U_matrix_opt
       write (chk_unit) ((lwindow(i, nkp), i=1, num_bands), nkp=1, num_kpts)
       write (chk_unit) (ndimwin(nkp), nkp=1, num_kpts)
-      write (chk_unit) (((u_matrix_opt(i, j, nkp), i=1, num_bands), j=1, num_wann), nkp=1, num_kpts)
+      !write (chk_unit) (((u_matrix_opt(i, j, nkp), i=1, num_bands), j=1, num_wann), nkp=1, num_kpts)
+      write (chk_unit) u_matrix_opt ! jmlihm
     endif
-    write (chk_unit) (((u_matrix(i, j, k), i=1, num_wann), j=1, num_wann), k=1, num_kpts)               ! U_matrix
-    write (chk_unit) ((((m_matrix(i, j, k, l), i=1, num_wann), j=1, num_wann), k=1, nntot), l=1, num_kpts) ! M_matrix
+    !write (chk_unit) (((u_matrix(i, j, k), i=1, num_wann), j=1, num_wann), k=1, num_kpts)               ! U_matrix
+    write (chk_unit) u_matrix ! U_matrix !jmlihm
+    !write (chk_unit) ((((m_matrix(i, j, k, l), i=1, num_wann), j=1, num_wann), k=1, nntot), l=1, num_kpts) ! M_matrix
+    write (chk_unit) m_matrix ! M_matrix !jmlihm
     write (chk_unit) ((wannier_centres(i, j), i=1, 3), j=1, num_wann)
     write (chk_unit) (wannier_spreads(i), i=1, num_wann)
     close (chk_unit)
@@ -3676,9 +3679,6 @@ contains
 
 !=================================================!
   subroutine param_read_chkpt()
-    !=================================================!
-    !! Read checkpoint file
-    !! IMPORTANT! If you change the chkpt format, adapt
     !! accordingly also the w90chk2chk.x utility!
     !!
     !! Note on parallelization: this function should be called
@@ -3753,6 +3753,7 @@ contains
     if (ntmp .ne. num_wann) &
       call io_error('param_read_chk: Mismatch in num_wann')
     ! End of consistency checks
+    print *, "end of consistency checks"
 
     read (chk_unit) checkpoint             ! checkpoint
     checkpoint = adjustl(trim(checkpoint))
@@ -3762,6 +3763,7 @@ contains
     if (have_disentangled) then
 
       read (chk_unit) omega_invariant     ! omega invariant
+      print *, "end of omega_inv"
 
       ! lwindow
       if (.not. allocated(lwindow)) then
@@ -3769,6 +3771,7 @@ contains
         if (ierr /= 0) call io_error('Error allocating lwindow in param_read_chkpt')
       endif
       read (chk_unit, err=122) ((lwindow(i, nkp), i=1, num_bands), nkp=1, num_kpts)
+      print *, "end of lwindow"
 
       ! ndimwin
       if (.not. allocated(ndimwin)) then
@@ -3776,29 +3779,36 @@ contains
         if (ierr /= 0) call io_error('Error allocating ndimwin in param_read_chkpt')
       endif
       read (chk_unit, err=123) (ndimwin(nkp), nkp=1, num_kpts)
+      print *, "end of ndimwin"
 
       ! U_matrix_opt
       if (.not. allocated(u_matrix_opt)) then
         allocate (u_matrix_opt(num_bands, num_wann, num_kpts), stat=ierr)
         if (ierr /= 0) call io_error('Error allocating u_matrix_opt in param_read_chkpt')
       endif
-      read (chk_unit, err=124) (((u_matrix_opt(i, j, nkp), i=1, num_bands), j=1, num_wann), nkp=1, num_kpts)
+      !read (chk_unit, err=124) (((u_matrix_opt(i, j, nkp), i=1, num_bands), j=1, num_wann), nkp=1, num_kpts)
+      read (chk_unit, err=124) u_matrix_opt !jmlihm
 
     endif
+    print *, "end of uopt"
 
     ! U_matrix
     if (.not. allocated(u_matrix)) then
       allocate (u_matrix(num_wann, num_wann, num_kpts), stat=ierr)
       if (ierr /= 0) call io_error('Error allocating u_matrix in param_read_chkpt')
     endif
-    read (chk_unit, err=125) (((u_matrix(i, j, k), i=1, num_wann), j=1, num_wann), k=1, num_kpts)
+    !read (chk_unit, err=125) (((u_matrix(i, j, k), i=1, num_wann), j=1, num_wann), k=1, num_kpts)
+    read (chk_unit, err=125) u_matrix !jmlihm
+    print *, "end of u matrix"
 
     ! M_matrix
     if (.not. allocated(m_matrix)) then
       allocate (m_matrix(num_wann, num_wann, nntot, num_kpts), stat=ierr)
       if (ierr /= 0) call io_error('Error allocating m_matrix in param_read_chkpt')
     endif
-    read (chk_unit, err=126) ((((m_matrix(i, j, k, l), i=1, num_wann), j=1, num_wann), k=1, nntot), l=1, num_kpts)
+    !read (chk_unit, err=126) ((((m_matrix(i, j, k, l), i=1, num_wann), j=1, num_wann), k=1, nntot), l=1, num_kpts)
+    read (chk_unit, err=126) m_matrix !jmlihm
+    print *, "end of m matrix"
 
     ! wannier_centres
     read (chk_unit, err=127) ((wannier_centres(i, j), i=1, 3), j=1, num_wann)

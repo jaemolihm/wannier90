@@ -114,7 +114,8 @@ program wannier
     endif
 
     stdout = io_file_unit()
-    open (unit=stdout, file=trim(seedname)//'.wout', status=trim(stat), position=trim(pos))
+    open (unit=stdout, file=trim(seedname)//'.wout', status=trim(stat), &
+          position=trim(pos))
     call param_write_header()
     if (num_nodes == 1) then
 #ifdef MPI
@@ -174,7 +175,7 @@ program wannier
       elseif (checkpoint .eq. 'postwann') then
         if (on_root) write (stdout, '(a/)') 'from plotting ...'
 !        goto 2002         ! go to plot_main
-        goto 1001         ! go to wann_main !jmlihm restart from wann_main
+        goto 1001         ! go to wann_main !jmlihm: goto wannierization
       else
         if (on_root) write (stdout, '(/a/)')
         call io_error('Value of checkpoint not recognised in wann_prog')

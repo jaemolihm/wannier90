@@ -3799,7 +3799,6 @@ contains
     endif
     !read (chk_unit, err=125) (((u_matrix(i, j, k), i=1, num_wann), j=1, num_wann), k=1, num_kpts)
     read (chk_unit, err=125) u_matrix !jmlihm
-    print *, "end of u matrix"
 
     ! M_matrix
     if (.not. allocated(m_matrix)) then
@@ -3808,7 +3807,6 @@ contains
     endif
     !read (chk_unit, err=126) ((((m_matrix(i, j, k, l), i=1, num_wann), j=1, num_wann), k=1, nntot), l=1, num_kpts)
     read (chk_unit, err=126) m_matrix !jmlihm
-    print *, "end of m matrix"
 
     ! wannier_centres
     read (chk_unit, err=127) ((wannier_centres(i, j), i=1, 3), j=1, num_wann)

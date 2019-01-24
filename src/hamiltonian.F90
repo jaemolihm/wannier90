@@ -650,7 +650,7 @@ contains
     !! Write out the matrix elements of r
     !============================================!
     use w90_parameters, only: m_matrix, wb, bk, num_wann, num_kpts, kpt_latt, &
-      nntot, write_bvec
+      nntot, write_bvec, do_write_bin, do_write_text
     use w90_constants, only: twopi, cmplx_i
     use w90_io, only: io_error, io_file_unit, seedname, io_date
 
@@ -660,17 +660,25 @@ contains
     real(kind=dp)        :: rdotk
     integer              :: loop_rpt, m, n, nkp, ind, nn, file_unit
     complex(kind=dp)     :: position(3)
+    complex(kind=dp), allocatable :: position_save(:, :, :, :)
     character(len=33) :: header
     character(len=9)  :: cdate, ctime
+    integer :: reclen
 
-    file_unit = io_file_unit()
-    open (file_unit, file=trim(seedname)//'_r.dat', form='formatted', status='unknown', err=101)
-    call io_date(cdate, ctime)
+    ! save positions for later use
+    allocate (position_save(num_wann, num_wann, nrpts, 3))
 
-    header = 'written on '//cdate//' at '//ctime
-    write (file_unit, *) header ! Date and time
-    write (file_unit, *) num_wann
-    write (file_unit, *) nrpts
+    ! write text file
+    if (do_write_text) then
+      file_unit = io_file_unit()
+      open (file_unit, file=trim(seedname)//'_r.dat', form='formatted', status='unknown', err=101)
+      call io_date(cdate, ctime)
+
+      header = 'written on '//cdate//' at '//ctime
+      write (file_unit, *) header ! Date and time
+      write (file_unit, *) num_wann
+      write (file_unit, *) nrpts
+    end if
 
     do loop_rpt = 1, nrpts
       do m = 1, num_wann
@@ -698,12 +706,24 @@ contains
               end do
             end do
           end do
-          write (file_unit, '(5I5,6F12.6)') irvec(:, loop_rpt), n, m, position(:)
+          if (do_write_text) write (file_unit, '(5I5,6F12.6)') irvec(:, loop_rpt), n, m, position(:)
+          position_save(n, m, loop_rpt, :) = position(:)
         end do
       end do
     end do
+    if (do_write_text) close (file_unit)
+!    end if
 
-    close (file_unit)
+    if (do_write_bin) then
+      file_unit = io_file_unit()
+      inquire (iolength=reclen) position_save(:, :, :, :)
+      open (file_unit, file=trim(seedname)//'_r.bin', form='unformatted', &
+            status='unknown', access='direct', recl=reclen, err=101)
+      write (file_unit, rec=1) position_save
+      close (file_unit)
+    end if
+
+    if (allocated(position_save)) deallocate (position_save)
 
     return
 

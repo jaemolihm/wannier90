@@ -41,7 +41,7 @@ if ($numargs==3) {
 
 
 if ($numargs==4) {
-    printf ("begin kpoints \n")
+    print "begin kpoints \n";
     for ($x=0; $x<$ARGV[0]; $x++) {
 	for ($y=0; $y<$ARGV[1]; $y++) {
 	    for ($z=0; $z<$ARGV[2]; $z++) {
@@ -49,7 +49,7 @@ if ($numargs==4) {
 	    }
 	}
     }
-    printf ("end kpoints \n")
+    print "end kpoints \n";
 }
 
 

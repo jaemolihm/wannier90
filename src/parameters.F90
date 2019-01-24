@@ -3660,10 +3660,13 @@ contains
       ! lwindow, ndimwin and U_matrix_opt
       write (chk_unit) ((lwindow(i, nkp), i=1, num_bands), nkp=1, num_kpts)
       write (chk_unit) (ndimwin(nkp), nkp=1, num_kpts)
-      write (chk_unit) (((u_matrix_opt(i, j, nkp), i=1, num_bands), j=1, num_wann), nkp=1, num_kpts)
+      !write (chk_unit) (((u_matrix_opt(i, j, nkp), i=1, num_bands), j=1, num_wann), nkp=1, num_kpts)
+      write (chk_unit) u_matrix_opt ! jmlihm
     endif
-    write (chk_unit) (((u_matrix(i, j, k), i=1, num_wann), j=1, num_wann), k=1, num_kpts)               ! U_matrix
-    write (chk_unit) ((((m_matrix(i, j, k, l), i=1, num_wann), j=1, num_wann), k=1, nntot), l=1, num_kpts) ! M_matrix
+    !write (chk_unit) (((u_matrix(i, j, k), i=1, num_wann), j=1, num_wann), k=1, num_kpts)               ! U_matrix
+    write (chk_unit) u_matrix ! U_matrix !jmlihm
+    !write (chk_unit) ((((m_matrix(i, j, k, l), i=1, num_wann), j=1, num_wann), k=1, nntot), l=1, num_kpts) ! M_matrix
+    write (chk_unit) m_matrix ! M_matrix !jmlihm
     write (chk_unit) ((wannier_centres(i, j), i=1, 3), j=1, num_wann)
     write (chk_unit) (wannier_spreads(i), i=1, num_wann)
     close (chk_unit)
@@ -3782,7 +3785,8 @@ contains
         allocate (u_matrix_opt(num_bands, num_wann, num_kpts), stat=ierr)
         if (ierr /= 0) call io_error('Error allocating u_matrix_opt in param_read_chkpt')
       endif
-      read (chk_unit, err=124) (((u_matrix_opt(i, j, nkp), i=1, num_bands), j=1, num_wann), nkp=1, num_kpts)
+      !read (chk_unit, err=124) (((u_matrix_opt(i, j, nkp), i=1, num_bands), j=1, num_wann), nkp=1, num_kpts)
+      read (chk_unit, err=124) u_matrix_opt !jmlihm
 
     endif
 
@@ -3791,14 +3795,16 @@ contains
       allocate (u_matrix(num_wann, num_wann, num_kpts), stat=ierr)
       if (ierr /= 0) call io_error('Error allocating u_matrix in param_read_chkpt')
     endif
-    read (chk_unit, err=125) (((u_matrix(i, j, k), i=1, num_wann), j=1, num_wann), k=1, num_kpts)
+    !read (chk_unit, err=125) (((u_matrix(i, j, k), i=1, num_wann), j=1, num_wann), k=1, num_kpts)
+    read (chk_unit, err=125) u_matrix !jmlihm
 
     ! M_matrix
     if (.not. allocated(m_matrix)) then
       allocate (m_matrix(num_wann, num_wann, nntot, num_kpts), stat=ierr)
       if (ierr /= 0) call io_error('Error allocating m_matrix in param_read_chkpt')
     endif
-    read (chk_unit, err=126) ((((m_matrix(i, j, k, l), i=1, num_wann), j=1, num_wann), k=1, nntot), l=1, num_kpts)
+    !read (chk_unit, err=126) ((((m_matrix(i, j, k, l), i=1, num_wann), j=1, num_wann), k=1, nntot), l=1, num_kpts)
+    read (chk_unit, err=126) m_matrix !jmlihm
 
     ! wannier_centres
     read (chk_unit, err=127) ((wannier_centres(i, j), i=1, 3), j=1, num_wann)

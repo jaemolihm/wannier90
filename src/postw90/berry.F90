@@ -143,6 +143,10 @@ contains
     character(len=24) :: file_name
     logical           :: eval_ahc, eval_morb, eval_kubo, not_scannable, eval_sc
 
+    real(kind=dp), allocatable :: imf_k_sum(:, :)! jml AHC_DEBUG
+    real(kind=dp), allocatable :: eig_(:)! jml AHC_DEBUG
+    real(kind=dp), allocatable :: eig_sum(:, :)! jml AHC_DEBUG
+
     if (nfermi == 0) call io_error( &
       'Must specify one or more Fermi levels when berry=true')
 
@@ -381,6 +385,11 @@ contains
       end do !loop_xyz
 
     else ! Do not read 'kpoint.dat'. Loop over a regular grid in the full BZ
+      allocate (eig_(num_wann)) ! jml AHC_DEBUG
+      allocate (eig_sum(num_wann, product(berry_kmesh))) ! jml AHC_DEBUG
+      allocate (imf_k_sum(3, product(berry_kmesh))) ! jml AHC_DEBUG
+      eig_sum = 0.d0
+      imf_k_sum = 0.d0
 
       kweight = db1*db2*db3
       kweight_adpt = kweight/berry_curv_adpt_kmesh**3
@@ -398,7 +407,7 @@ contains
         ! ***BEGIN CODE BLOCK 1***
         !
         if (eval_ahc) then
-          call berry_get_imf_klist(kpt, imf_k_list)
+          call berry_get_imf_klist(kpt, imf_k_list, eig_=eig_) ! jml AHC_DEBUG
           do if = 1, nfermi
             vdum(1) = sum(imf_k_list(:, 1, if))
             vdum(2) = sum(imf_k_list(:, 2, if))
@@ -419,6 +428,10 @@ contains
               imf_list(:, :, if) = imf_list(:, :, if) + imf_k_list(:, :, if)*kweight
             endif
           enddo
+          imf_k_sum(1, loop_xyz + 1) = sum(imf_k_list(:, 1, 1)) ! jml AHC_DEBUG
+          imf_k_sum(2, loop_xyz + 1) = sum(imf_k_list(:, 2, 1)) ! jml AHC_DEBUG
+          imf_k_sum(3, loop_xyz + 1) = sum(imf_k_list(:, 3, 1)) ! jml AHC_DEBUG
+          eig_sum(:, loop_xyz + 1) = eig_(:) ! jml AHC_DEBUG
         end if
 
         if (eval_morb) then
@@ -462,6 +475,25 @@ contains
     if (eval_ahc) then
       call comms_reduce(imf_list(1, 1, 1), 3*3*nfermi, 'SUM')
       call comms_reduce(adpt_counter_list(1), nfermi, 'SUM')
+! begin AHC_DEBUG
+      call comms_reduce(imf_k_sum(1, 1), 3*product(berry_kmesh), 'SUM')
+      if (on_root) then
+        inquire (iolength=loop_xyz) imf_k_sum
+        open (666, file='berry_curv_wann.bin', form='unformatted', &
+              status='unknown', access='direct', recl=loop_xyz)
+        write (666, rec=1) imf_k_sum
+        close (666)
+      end if
+
+      call comms_reduce(eig_sum(1, 1), num_wann*product(berry_kmesh), 'SUM')
+      if (on_root) then
+        inquire (iolength=loop_xyz) eig_sum
+        open (666, file='energy_wann.bin', form='unformatted', &
+              status='unknown', access='direct', recl=loop_xyz)
+        write (666, rec=1) eig_sum
+        close (666)
+      end if
+! end AHC_DEBUG
     endif
 
     if (eval_morb) then
@@ -874,7 +906,8 @@ contains
 
   end subroutine berry_main
 
-  subroutine berry_get_imf_klist(kpt, imf_k_list, occ)
+!  subroutine berry_get_imf_klist(kpt, imf_k_list, occ)
+  subroutine berry_get_imf_klist(kpt, imf_k_list, occ, eig_) ! jml AHC_DEBUG
     !============================================================!
     !                                                            !
     !! Calculates the Berry curvature traced over the occupied
@@ -884,19 +917,22 @@ contains
     !============================================================!
     ! Arguments
     !
+    use w90_parameters, only: num_wann
     real(kind=dp), intent(in)                    :: kpt(3)
     real(kind=dp), intent(out), dimension(:, :, :) :: imf_k_list
     real(kind=dp), intent(in), optional, dimension(:) :: occ
+    real(kind=dp), intent(inout), optional :: eig_(num_wann) ! jml AHC_DEBUG
 
     if (present(occ)) then
       call berry_get_imfgh_klist(kpt, imf_k_list, occ=occ)
     else
-      call berry_get_imfgh_klist(kpt, imf_k_list)
+      call berry_get_imfgh_klist(kpt, imf_k_list, eig_=eig_)
     endif
 
   end subroutine berry_get_imf_klist
 
-  subroutine berry_get_imfgh_klist(kpt, imf_k_list, img_k_list, imh_k_list, occ)
+!  subroutine berry_get_imfgh_klist(kpt, imf_k_list, img_k_list, imh_k_list, occ)
+  subroutine berry_get_imfgh_klist(kpt, imf_k_list, img_k_list, imh_k_list, occ, eig_) ! jml AHC_DEBUG
     !=========================================================!
     !
     !! Calculates the three quantities needed for the orbital
@@ -929,6 +965,7 @@ contains
     real(kind=dp), intent(out), dimension(:, :, :), optional &
       :: imf_k_list, img_k_list, imh_k_list
     real(kind=dp), intent(in), optional, dimension(:) :: occ
+    real(kind=dp), intent(inout), optional :: eig_(num_wann) ! jml AHC_DEBUG
 
     complex(kind=dp), allocatable :: HH(:, :)
     complex(kind=dp), allocatable :: UU(:, :)
@@ -972,6 +1009,7 @@ contains
       call wham_get_eig_UU_HH_JJlist(kpt, eig, UU, HH, JJp_list, JJm_list)
       call wham_get_occ_mat_list(UU, f_list, g_list, eig=eig)
     endif
+    if (present(eig_)) eig_ = eig ! jml AHC_DEBUG
 
     call pw90common_fourier_R_to_k_vec(kpt, AA_R, OO_true=AA, OO_pseudo=OOmega)
 

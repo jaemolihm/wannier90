@@ -23,6 +23,7 @@ program postw90
   use w90_postw90_common, only: pw90common_wanint_setup, pw90common_wanint_get_kpoint_file, &
     pw90common_wanint_param_dist, pw90common_wanint_data_dist
 
+  use w90_comms, only: my_node_id ! jml AHC_DEBUG
   ! These modules deal with the interpolation of specific physical properties
   !
   use w90_dos

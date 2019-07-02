@@ -250,26 +250,34 @@ contains
 
       ! Now the printing, only on root node
       if (on_root) then
-        do i = 1, num_kpts
-          kpt = kpoints(:, i)
-          ! First calculate the absolute coordinates for printing
-          frac = 0._dp
-          do j = 1, 3
-            frac(j) = recip_lattice(1, j)*kpt(1) + recip_lattice(2, j)*kpt(2) + recip_lattice(3, j)*kpt(3)
-          end do
+        ! jml: write as binary file
+        j = io_file_unit()
+        inquire (iolength=i) globaleig
+        open (j, file='si_geninterp.bin', form='unformatted', &
+              status='unknown', access='direct', recl=i)
+        write (j, rec=1) globaleig
+        close (j)
 
-          ! I print each line
-          if (geninterp_alsofirstder) then
-            do enidx = 1, num_wann
-              write (outdat_unit, '(I10,7G18.10)') kpointidx(i), frac, &
-                globaleig(enidx, i), globaldeleig(enidx, :, i)
-            end do
-          else
-            do enidx = 1, num_wann
-              write (outdat_unit, '(I10,4G18.10)') kpointidx(i), frac, globaleig(enidx, i)
-            end do
-          end if
-        end do
+!        do i = 1, num_kpts
+!          kpt = kpoints(:, i)
+!          ! First calculate the absolute coordinates for printing
+!          frac = 0._dp
+!          do j = 1, 3
+!            frac(j) = recip_lattice(1, j)*kpt(1) + recip_lattice(2, j)*kpt(2) + recip_lattice(3, j)*kpt(3)
+!          end do
+!
+!          ! I print each line
+!          if (geninterp_alsofirstder) then
+!            do enidx = 1, num_wann
+!              write (outdat_unit, '(I10,7G18.10)') kpointidx(i), frac, &
+!                globaleig(enidx, i), globaldeleig(enidx, :, i)
+!            end do
+!          else
+!            do enidx = 1, num_wann
+!              write (outdat_unit, '(I10,4G18.10)') kpointidx(i), frac, globaleig(enidx, i)
+!            end do
+!          end if
+!        end do
         close (outdat_unit)
       end if
     else

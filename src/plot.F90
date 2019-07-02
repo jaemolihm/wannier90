@@ -89,7 +89,7 @@ contains
       !
       if (write_hr .or. write_rmn .or. write_tb) then
         if (.not. done_ws_distance) call ws_translate_dist(nrpts, irvec)
-        call ws_write_vec(nrpts, irvec)
+!        call ws_write_vec(nrpts, irvec) ! jmlim
       end if
     end if
 

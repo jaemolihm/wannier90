@@ -2175,6 +2175,11 @@ contains
     endif
 
     ! Projections
+    auto_projections = .false.
+    call param_get_keyword('auto_projections', found, l_value=auto_projections)
+    if (auto_projections .and. spinors) &
+      call io_error('Error: Cannot automatically generate spinor projections.')
+    num_proj = 0
     call param_get_block_length('projections', found, i_temp)
     if (guiding_centres .and. .not. found .and. .not. (gamma_only .and. use_bloch_phases)) &
       call io_error('param_read: Guiding centres requested, but no projection block found')

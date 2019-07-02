@@ -451,6 +451,7 @@ contains
       do_write_bin, do_write_text
 
     integer            :: i, j, irpt, file_unit
+    integer :: reclen
     character(len=33) :: header
     character(len=9)  :: cdate, ctime
     integer :: reclen

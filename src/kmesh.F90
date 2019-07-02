@@ -678,20 +678,20 @@ contains
     if (spinors) then
       ! Projections
       write (nnkpout, '(a)') 'begin spinor_projections'
-      if (allocated(proj_site)) then
+      if (allocated(input_proj_site)) then
         write (nnkpout, '(i6)') num_proj
         do i = 1, num_proj
           write (nnkpout, '(3(f10.5,1x),2x,3i3)') &
-            proj_site(1, i), proj_site(2, i), proj_site(3, i), &
-            proj_l(i), proj_m(i), proj_radial(i)
+            input_proj_site(1, i), input_proj_site(2, i), input_proj_site(3, i), &
+            input_proj_l(i), input_proj_m(i), input_proj_radial(i)
 !~           write(nnkpout,'(3x,3f7.3,1x,3f7.3,1x,f7.2)') &
           write (nnkpout, '(2x,3f11.7,1x,3f11.7,1x,f7.2)') &
-            proj_z(1, i), proj_z(2, i), proj_z(3, i), &
-            proj_x(1, i), proj_x(2, i), proj_x(3, i), &
-            proj_zona(i)
+            input_proj_z(1, i), input_proj_z(2, i), input_proj_z(3, i), &
+            input_proj_x(1, i), input_proj_x(2, i), input_proj_x(3, i), &
+            input_proj_zona(i)
           write (nnkpout, '(2x,1i3,1x,3f11.7)') &
-            proj_s(i), &
-            proj_s_qaxis(1, i), proj_s_qaxis(2, i), proj_s_qaxis(3, i)
+            input_proj_s(i), &
+            input_proj_s_qaxis(1, i), input_proj_s_qaxis(2, i), input_proj_s_qaxis(3, i)
         enddo
       else
         ! No projections
@@ -701,17 +701,17 @@ contains
     else
       ! Projections
       write (nnkpout, '(a)') 'begin projections'
-      if (allocated(proj_site)) then
+      if (allocated(input_proj_site)) then
         write (nnkpout, '(i6)') num_proj
         do i = 1, num_proj
           write (nnkpout, '(3(f10.5,1x),2x,3i3)') &
-            proj_site(1, i), proj_site(2, i), proj_site(3, i), &
-            proj_l(i), proj_m(i), proj_radial(i)
+            input_proj_site(1, i), input_proj_site(2, i), input_proj_site(3, i), &
+            input_proj_l(i), input_proj_m(i), input_proj_radial(i)
 !~           write(nnkpout,'(3x,3f7.3,1x,3f7.3,1x,f7.2)') &
           write (nnkpout, '(2x,3f11.7,1x,3f11.7,1x,f7.2)') &
-            proj_z(1, i), proj_z(2, i), proj_z(3, i), &
-            proj_x(1, i), proj_x(2, i), proj_x(3, i), &
-            proj_zona(i)
+            input_proj_z(1, i), input_proj_z(2, i), input_proj_z(3, i), &
+            input_proj_x(1, i), input_proj_x(2, i), input_proj_x(3, i), &
+            input_proj_zona(i)
         enddo
       else
         ! No projections
@@ -720,17 +720,13 @@ contains
       write (nnkpout, '(a/)') 'end projections'
     endif
 
-    ! vv: SCDM block
-    write (nnkpout, '(a)') 'begin scdm_info'
-    if (scdm_proj) then
-      write (nnkpout, '(i6)') 1
-      write (nnkpout, '(i6)') num_wann
-      write (nnkpout, '(i6)') scdm_entanglement
-      write (nnkpout, '(2x,2f10.5)') scdm_mu, scdm_sigma
-    else
+    ! Info for automatic generation of projections
+    if (auto_projections) then
+      write (nnkpout, '(a)') 'begin auto_projections'
+      write (nnkpout, '(i6)') num_proj
       write (nnkpout, '(i6)') 0
-    endif
-    write (nnkpout, '(a/)') 'end scdm_info'
+      write (nnkpout, '(a/)') 'end auto_projections'
+    end if
 
     ! Nearest neighbour k-points
     write (nnkpout, '(a)') 'begin nnkpts'
@@ -1080,8 +1076,11 @@ contains
         elseif (shell == search_shells) then
           if (on_root) write (stdout, *) ' '
           if (on_root) write (stdout, '(1x,a,i3,a)') 'Unable to satisfy B1 with any of the first ', search_shells, ' shells'
-          if (on_root) write (stdout, '(1x,a)') 'Your cell might be very long, or you may have an irregular MP grid'
-          if (on_root) write (stdout, '(1x,a)') 'Try increasing the parameter search_shells in the win file (default=12)'
+          if (on_root) write (stdout, '(1x,a)') 'Check that you have specified your unit cell to a high precision'
+          if (on_root) write (stdout, '(1x,a)') 'Low precision might cause a loss of symmetry.'
+          if (on_root) write (stdout, '(1x,a)') ' '
+          if (on_root) write (stdout, '(1x,a)') 'If your cell is very long, or you have an irregular MP grid'
+          if (on_root) write (stdout, '(1x,a)') 'Try increasing the parameter search_shells in the win file (default=30)'
           if (on_root) write (stdout, *) ' '
           call io_error('kmesh_get_automatic')
         end if

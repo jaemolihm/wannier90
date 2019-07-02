@@ -242,6 +242,7 @@ contains
     call comms_bcast(timing_level, 1)
     call comms_bcast(iprint, 1)
     call comms_bcast(ws_distance_tol, 1)
+    call comms_bcast(ws_search_size(1), 3)
 !    call comms_bcast(num_atoms,1)   ! Ivo: not used in postw90, right?
 !    call comms_bcast(num_species,1) ! Ivo: not used in postw90, right?
     call comms_bcast(real_lattice(1, 1), 9)
@@ -285,6 +286,14 @@ contains
     call comms_bcast(gyrotropic_smr_index, 1)
 
     call comms_bcast(spinors, 1)
+
+    call comms_bcast(shc_freq_scan, 1)
+    call comms_bcast(shc_alpha, 1)
+    call comms_bcast(shc_beta, 1)
+    call comms_bcast(shc_gamma, 1)
+    call comms_bcast(shc_bandshift, 1)
+    call comms_bcast(shc_bandshift_firstband, 1)
+    call comms_bcast(shc_bandshift_energyshift, 1)
 
     call comms_bcast(kubo_adpt_smr, 1)
     call comms_bcast(kubo_adpt_smr_fac, 1)

@@ -48,6 +48,26 @@ output = silane.wout
 # This is a gamma-only test, can only run in serial
 max_nprocs = 0
 
+# Silane, valence states, Gamma only
+[testw90_na_chain_gamma/]
+program = WANNIER90_WOUT_OK
+inputs_args = ('Na_chain.win', '')
+output = Na_chain.wout
+# This is a gamma-only test, can only run in serial
+max_nprocs = 0
+
+# Silicon, valence states
+[testw90_example11_1/]
+program = WANNIER90_WOUT_OK
+inputs_args = ('silicon.win', '')
+output = silicon.wout
+
+# Silicon, valence and conduction states
+[testw90_example11_2/]
+program = WANNIER90_WOUT_OK
+inputs_args = ('silicon.win', '')
+output = silicon.wout
+
 # Test for the nnkpt file
 [testw90_nnkpt1/]
 program = WANNIER90_NNKP_OK
@@ -313,6 +333,36 @@ output = gaas-sc_xyz.dat
 program = WANNIER90_SLWFC_WOUT_OK
 inputs_args = ('gaas.win', '')
 output = gaas.wout
+
+# Test of SHC for fcc platinum
+[testpostw90_pt_shc/]
+program = POSTW90_SHCFERMIDAT_OK
+inputs_args = ('Pt.win', '')
+output = Pt-shc-fermiscan.dat 
+
+# Test of ac SHC for GaAs
+[testpostw90_gaas_shc/]
+program = POSTW90_SHCFREQDAT_OK
+inputs_args = ('GaAs.win', '')
+output = GaAs-shc-freqscan.dat
+
+# Test of kpath with SHC as color for fcc platinum
+[testpostw90_pt_kpathbandsshc/]
+program = POSTW90_SHCKPATHBANDSDAT_OK
+inputs_args = ('Pt.win', '')
+output = Pt-bands.dat 
+
+# Test of kpath SHC for fcc platinum
+[testpostw90_pt_kpathshc/]
+program = POSTW90_SHCKPATHDAT_OK
+inputs_args = ('Pt.win', '')
+output = Pt-shc.dat
+
+# Test of kslice SHC for fcc platinum
+[testpostw90_pt_ksliceshc/]
+program = POSTW90_SHCKSLICEDAT_OK
+inputs_args = ('Pt.win', '')
+output = Pt-kslice-shc.dat
 
 [categories]
 wannier_only = testw90_*

@@ -55,6 +55,15 @@ module w90_get_oper
   complex(kind=dp), allocatable, save :: SH_R(:, :, :, :) ! <0n|sigma_x,y,z.H|Rm>
   !! $$\langle 0n | \sigma_{x,y,z}.H  | Rm \rangle$$
 
+  ! JML perturbed Wannier function
+  complex(kind=dp), allocatable, save :: omega_r_pwf(:, :, :)
+  !! omega_r_pwf at Wannier basis.
+  complex(kind=dp), allocatable, save :: vel_r_pwf(:, :, :, :)
+  !! vel_r_pwf at Wannier basis.
+  complex(kind=dp), allocatable, save :: svel_r_pwf(:, :, :, :)
+  !! svel_r_pwf at Wannier basis.
+  ! END JML
+
 contains
 
   !======================================================!
@@ -1557,5 +1566,254 @@ contains
                         v_matrix(1:ns_b, 1:num_wann, ik_b), 'N', &
                         S, eigval(wm_a:wm_a + ns_a - 1, ik_a), H)
   end subroutine get_gauge_overlap_matrix
+
+  !==================================================
+  subroutine get_vel_r_pwf_jml
+    !==================================================
+    !
+    !==================================================
+    use w90_io, only : io_file_unit, io_error
+    use w90_comms, only : on_root, comms_bcast
+    use w90_constants, only : bohr_angstrom_internal, eV_au
+    use w90_parameters, only: num_bands, num_wann, ndimwin, num_kpts, &
+        have_disentangled, eigval
+    use w90_postw90_common, only: nrpts, v_matrix
+    use w90_utility, only : utility_zgemmm, utility_zgemm_new
+
+    implicit none
+
+    complex(kind=dp), allocatable :: vel_q_cart(:, :, :, :)
+    !! vel_q at coarse k grid. Computed by ahc.f90 and read
+    complex(kind=dp), allocatable :: svel_q_cart(:, :, :, :)
+    !! svel_q at coarse k grid. Computed by ahc.f90 and read
+    complex(kind=dp), allocatable :: vel_q(:, :, :, :)
+    !! vel at coarse k grid, in Hamiltonian eigenbasis
+    complex(kind=dp), allocatable :: svel_q(:, :, :, :)
+    !! svel at coarse k grid, in Hamiltonian eigenbasis
+    complex(kind=dp), allocatable :: vel_q_w(:, :, :, :)
+    !! vel at coarse k grid, in wannier basis
+    complex(kind=dp), allocatable :: svel_q_w(:, :, :, :)
+    !! svel at coarse k grid, in wannier basis
+
+    complex(kind=dp), allocatable :: vel_inv_e_q(:,:), svel_inv_e_q(:,:), &
+      vel_q_add(:,:), svel_q_add(:,:), qmat(:,:), mat_temp(:,:), mat_temp2(:,:), &
+      qmat_small(:,:)
+    integer, allocatable :: num_states(:)
+    integer :: ik, file_unit, recl, ib1, ib2, ib, jb, idir
+
+    character(len=256) :: ahc_dir
+    integer :: num_bands_full, ahc_nbndskip
+
+    ! We assume ahc_nbnd for ph.x input is equal to num_bands (after exclusion) here.
+
+    ahc_nbndskip = 20
+    num_bands_full = 50
+    ahc_dir = './ahc_dir/'
+
+    if (allocated(vel_r_pwf)) then
+      return
+    endif
+
+    if (on_root) then
+
+      allocate(vel_r_pwf(num_wann, num_wann, nrpts, 3))
+      allocate(svel_r_pwf(num_wann, num_wann, nrpts, 3))
+
+      allocate(vel_q_cart(num_bands_full, num_bands, 3, num_kpts))
+      allocate(svel_q_cart(num_bands_full, num_bands, 3, num_kpts))
+
+      allocate(vel_q(num_bands, num_bands, num_kpts, 3))
+      allocate(svel_q(num_bands, num_bands, num_kpts, 3))
+      allocate(vel_q_w(num_wann, num_wann, num_kpts, 3))
+      allocate(svel_q_w(num_wann, num_wann, num_kpts, 3))
+
+      allocate(vel_q_add(num_bands, num_bands))
+      allocate(svel_q_add(num_bands, num_bands))
+
+      allocate(mat_temp(num_bands, num_bands))
+      allocate(mat_temp2(num_bands, num_bands))
+
+      allocate (qmat(num_bands, num_bands))
+      allocate (qmat_small(num_bands, num_bands))
+
+      ! read vel_q_cart from ahc file
+      file_unit = io_file_unit()
+      inquire(iolength=recl) vel_q_cart(:, :, :, 1)
+      open (file_unit, file=TRIM(ahc_dir) // 'vel_mel.bin', &
+        form='unformatted', access='direct', recl=recl, status='old')
+      do ik = 1, num_kpts
+        read (file_unit, rec=ik) vel_q_cart(:, :, :, ik)
+      enddo
+      close (file_unit)
+
+      ! read svel_q_cart from ahc file
+      file_unit = io_file_unit()
+      inquire(iolength=recl) svel_q_cart(:, :, :, 1)
+      open (file_unit, file=TRIM(ahc_dir) // 'svel_mel.bin', &
+        form='unformatted', access='direct', recl=recl, status='old')
+      do ik = 1, num_kpts
+        read (file_unit, rec=ik) svel_q_cart(:, :, :, ik)
+      enddo
+      close (file_unit)
+
+      allocate (num_states(num_kpts))
+      do ik = 1, num_kpts
+        if (have_disentangled) then
+          num_states(ik) = ndimwin(ik)
+        else
+          num_states(ik) = num_wann
+        endif
+      enddo
+
+      vel_q = (0.d0, 0.d0)
+      svel_q = (0.d0, 0.d0)
+
+      do ik = 1, num_kpts
+
+        ! vel_inv_e_q(i, j) = -1j * -1j * vel_q_cart(i, j, ik) / ( eigval(j, ik) - eigval(i, ik) )
+        allocate (vel_inv_e_q(num_bands, num_bands))
+        allocate (svel_inv_e_q(num_bands, num_bands))
+        vel_inv_e_q = (0.d0, 0.d0)
+        svel_inv_e_q = (0.d0, 0.d0)
+        do jb = 1, num_bands
+          do ib = 1, num_bands
+            if (abs(eigval(jb, ik) - eigval(ib, ik)) < 1.d-5) cycle
+            svel_inv_e_q(ib, jb) = svel_q_cart(ahc_nbndskip+ib, jb, 1, ik) / (eigval(jb, ik) - eigval(ib, ik))
+            vel_inv_e_q(ib, jb) = vel_q_cart(ahc_nbndskip+ib, jb, 2, ik) / (eigval(jb, ik) - eigval(ib, ik))
+          enddo
+        enddo
+        vel_inv_e_q = (0.d0, -1.d0) * vel_inv_e_q
+        svel_inv_e_q = (0.d0, -1.d0) * svel_inv_e_q
+
+        if (ik == 1) then
+          print*, 'svel_inv_e_q(1, 3, 1) = ', svel_inv_e_q(1, 3)
+          print*, ' vel_inv_e_q(1, 3, 1) = ',  vel_inv_e_q(1, 3)
+        endif
+
+        ! qmat = 1 - v_matrix * v_matrix.H
+        call utility_zgemm_new(v_matrix(:,:,ik), v_matrix(:,:,ik), qmat, 'N', 'C')
+        qmat = - qmat
+        do jb = 1, num_bands
+          qmat(jb, jb) = 1.d0 + qmat(jb, jb)
+        enddo
+        do jb = 1, num_bands
+          do ib = 1, num_bands
+            qmat_small(ib, jb) = qmat(ib, jb)
+          enddo
+        enddo
+
+        ! Compute vel_q_add(i,j) += -1j * (vel_inv_e_q.H * qmat)(i,j) * eigval(j, ik) for i <= 8
+        ! Compute vel_q_add(j,i) +=  1j * (  qmat * vel_inv_e_q)(j,i) * eigval(j, ik) for i <= 8
+        call utility_zgemm_new(vel_inv_e_q, qmat_small, mat_temp, 'C', 'N')
+
+        vel_q_add = (0.d0, 0.d0)
+        do ib = 1, 8
+          do jb = 1, num_bands
+            vel_q_add(ib, jb) = vel_q_add(ib, jb) + (0.d0,-1.d0) * mat_temp(ib, jb) * eigval(jb, ik)
+            vel_q_add(jb, ib) = vel_q_add(jb, ib) + (0.d0, 1.d0) * conjg(mat_temp(ib, jb)) * eigval(jb, ik)
+          enddo
+        enddo
+
+        ! same for svel_q_add
+        call utility_zgemm_new(svel_inv_e_q, qmat_small, mat_temp, 'C', 'N')
+
+        svel_q_add = (0.d0, 0.d0)
+        do ib = 1, 8
+          do jb = 1, num_bands
+            svel_q_add(ib, jb) = svel_q_add(ib, jb) + (0.d0,-1.d0) * mat_temp(ib, jb) * eigval(jb, ik)
+            svel_q_add(jb, ib) = svel_q_add(jb, ib) + (0.d0, 1.d0) * conjg(mat_temp(ib, jb)) * eigval(jb, ik)
+          enddo
+        enddo
+
+        if (ik == 1) then
+          print*, 'svel_q_add(1, 11, 1) = ', svel_q_add(1, 11)
+          print*, ' vel_q_add(1, 11, 1) = ',  vel_q_add(1, 11)
+        endif
+
+        ! vel_q(:, :, ik) = vel_q(:, :, ik) + vel_q_add
+        ! svel_q(:, :, ik) = svel_q(:, :, ik) + svel_q_add
+
+        do idir = 1, 3
+          vel_q(:, :, ik, idir) = vel_q(:, :, ik, idir) &
+            + vel_q_cart(ahc_nbndskip+1:ahc_nbndskip+num_bands, :, idir, ik)
+          svel_q(:, :, ik, idir) = svel_q(:, :, ik, idir) &
+            + svel_q_cart(ahc_nbndskip+1:ahc_nbndskip+num_bands, :, idir, ik)
+        enddo !idir
+
+        deallocate(vel_inv_e_q)
+        deallocate(svel_inv_e_q)
+
+      enddo ! ik
+
+      ! change unit: pwscf is in bohr unit, w90 is in angstrom
+      vel_q = vel_q * bohr_angstrom_internal * 0.5 / eV_au
+      svel_q = svel_q * bohr_angstrom_internal * 0.5 / eV_au
+
+      ! rotate vel_q from eigenbasis to wannier basis
+      ! FIXME: get_win_min
+
+      inquire(iolength=ik) vel_q
+      open(666, file='debug_vel_q.bin', form='unformatted', access='direct',recl=ik)
+      write(666, rec=1) vel_q
+      close(666)
+      inquire(iolength=ik) svel_q
+      open(666, file='debug_svel_q.bin', form='unformatted', access='direct',recl=ik)
+      write(666, rec=1) svel_q
+      close(666)
+
+      do idir = 1, 3
+        do ik = 1, num_kpts
+
+        call utility_zgemmm(v_matrix(1:num_states(ik), 1:num_wann, ik), 'C', &
+                            vel_q(1:num_states(ik), 1:num_states(ik), ik, idir), 'N', &
+                            v_matrix(1:num_states(ik), 1:num_wann, ik), 'N', &
+                            vel_q_w(:, :, ik, idir))
+        call utility_zgemmm(v_matrix(1:num_states(ik), 1:num_wann, ik), 'C', &
+                            svel_q(1:num_states(ik), 1:num_states(ik), ik, idir), 'N', &
+                            v_matrix(1:num_states(ik), 1:num_wann, ik), 'N', &
+                            svel_q_w(:, :, ik, idir))
+        enddo
+      enddo
+
+      inquire(iolength=ik) vel_q_w
+      open(666, file='debug_vel_q_w.bin', form='unformatted', access='direct',recl=ik)
+      write(666, rec=1) vel_q_w
+      close(666)
+      inquire(iolength=ik) svel_q_w
+      open(666, file='debug_svel_q_w.bin', form='unformatted', access='direct',recl=ik)
+      write(666, rec=1) svel_q_w
+      close(666)
+      inquire(iolength=ik) v_matrix
+      open(666, file='debug_v_matrix.bin', form='unformatted', access='direct',recl=ik)
+      write(666, rec=1) v_matrix
+      close(666)
+
+      print*, 'vel_q_w(1,3,1,2) = ', vel_q_w(1,3,1,2)
+      print*, 'svel_q_w(1,3,1,1) = ', svel_q_w(1,3,1,1)
+
+      do idir = 1, 3
+        call fourier_q_to_R(vel_q_w(:, :, :, idir), vel_r_pwf(:, :, :, idir))
+        call fourier_q_to_R(svel_q_w(:, :, :, idir), svel_r_pwf(:, :, :, idir))
+      enddo
+
+      deallocate(num_states)
+      deallocate(qmat)
+      deallocate(vel_q_cart)
+      deallocate(svel_q_cart)
+      deallocate(vel_q)
+      deallocate(vel_q_w)
+      deallocate(svel_q)
+      deallocate(svel_q_w)
+    endif
+
+    if (.not. on_root) then
+      allocate(vel_r_pwf(num_wann, num_wann, nrpts, 3))
+      allocate(svel_r_pwf(num_wann, num_wann, nrpts, 3))
+    endif
+
+    call comms_bcast(vel_r_pwf(1, 1, 1, 1), 3*num_wann*num_wann*nrpts)
+    call comms_bcast(svel_r_pwf(1, 1, 1, 1), 3*num_wann*num_wann*nrpts)
+
+  end subroutine get_vel_r_pwf_jml
 
 end module w90_get_oper

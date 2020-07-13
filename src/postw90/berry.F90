@@ -65,7 +65,9 @@ module w90_berry
   integer, parameter, public:: berry_alpha_beta_S(3, 3) = reshape((/1, 4, 5, 4, 2, 6, 5, 6, 3/), (/3, 3/))
 !(/  (/1,4,5/), (/ 4,2,6 /)  , (/ 5,6,3 /)   /)
 
-  complex(kind=dp), allocatable :: rmn_save_jml(:, :, :, :)
+  complex(kind=dp), allocatable :: rmn_save_jml_A(:, :, :, :)
+  complex(kind=dp), allocatable :: rmn_save_jml_D(:, :, :, :)
+  complex(kind=dp), allocatable :: rmn_save_pwf_jml(:, :, :, :)
 
 contains
 
@@ -102,9 +104,10 @@ contains
       kubo_adpt_smr, kubo_adpt_smr_fac, &
       kubo_adpt_smr_max, kubo_smr_fixed_en_width, &
       scissors_shift, num_valence_bands, &
-      shc_bandshift, shc_bandshift_firstband, shc_bandshift_energyshift
+      shc_bandshift, shc_bandshift_firstband, shc_bandshift_energyshift, &
+      use_pwf_jml
     use w90_get_oper, only: get_HH_R, get_AA_R, get_BB_R, get_CC_R, &
-      get_SS_R, get_SHC_R
+      get_SS_R, get_SHC_R, get_vel_r_pwf_jml
 
     real(kind=dp), allocatable    :: adkpt(:, :)
 
@@ -153,7 +156,7 @@ contains
                          db1, db2, db3, fac, freq, rdum, vdum(3)
     integer           :: n, i, j, k, jk, ikpt, if, ispn, ierr, loop_x, loop_y, loop_z, &
                          loop_xyz, loop_adpt, adpt_counter_list(nfermi), ifreq, &
-                         file_unit, ik
+                         file_unit, ik, nk
     character(len=24) :: file_name
     logical           :: eval_ahc, eval_morb, eval_kubo, not_scannable, eval_sc, eval_shc
     logical           :: ladpt_kmesh
@@ -232,6 +235,12 @@ contains
       endif
     endif
 
+    if (wanint_kpoint_file) then
+      nk = sum(num_int_kpts_on_node)
+    else
+      nk = PRODUCT(berry_kmesh)
+    endif
+
     if (eval_sc) then
       call get_HH_R
       call get_AA_R
@@ -239,10 +248,13 @@ contains
       allocate (sc_list(3, 6, kubo_nfreq))
       sc_k_list = 0.0_dp
       sc_list = 0.0_dp
-      if (wanint_kpoint_file) then
-        allocate(rmn_save_jml(3, num_wann, num_wann, sum(num_int_kpts_on_node)))
-      else
-        allocate(rmn_save_jml(3, num_wann, num_wann, PRODUCT(berry_kmesh)))
+      allocate(rmn_save_jml_A(3, num_wann, num_wann, nk))
+      allocate(rmn_save_jml_D(3, num_wann, num_wann, nk))
+      rmn_save_jml_A = cmplx_0
+      rmn_save_jml_D = cmplx_0
+      if (use_pwf_jml) then
+        allocate(rmn_save_pwf_jml(3, num_wann, num_wann, nk))
+        rmn_save_pwf_jml = cmplx_0
       endif
     endif
 
@@ -269,6 +281,10 @@ contains
       endif
     endif
 
+    if (use_pwf_jml) then
+      call get_vel_r_pwf_jml
+    endif
+
     if (on_root) then
 
       write (stdout, '(/,/,1x,a)') &
@@ -293,8 +309,9 @@ contains
         endif
       endif
 
-      if (eval_sc) write (stdout, '(/,3x,a)') &
-        '* Shift current'
+      if (eval_sc) then
+        write (stdout, '(/,3x,a)') '* Shift current'
+      endif
 
       if (eval_shc) then
         write (stdout, '(/,3x,a)') '* Spin Hall Conductivity'
@@ -303,6 +320,10 @@ contains
         else
           write (stdout, '(/,3x,a)') '  Fermi energy scan'
         endif
+      endif
+
+      if (use_pwf_jml) then
+        write(stdout, *) ' Using perturbed Wannier function method by JML'
       endif
 
       if (transl_inv) then
@@ -648,16 +669,24 @@ contains
 
     if (eval_sc) then
       call comms_reduce(sc_list(1, 1, 1), 3*6*kubo_nfreq, 'SUM')
-      if (wanint_kpoint_file) then
-        call comms_reduce(rmn_save_jml(1, 1, 1, 1), 3*num_wann*num_wann*sum(num_int_kpts_on_node), 'SUM')
-      else
-        call comms_reduce(rmn_save_jml(1, 1, 1, 1), 3*num_wann*num_wann*PRODUCT(berry_kmesh), 'SUM')
-      endif
+      call comms_reduce(rmn_save_jml_A(1, 1, 1, 1), 3*num_wann*num_wann*nk, 'SUM')
+      call comms_reduce(rmn_save_jml_D(1, 1, 1, 1), 3*num_wann*num_wann*nk, 'SUM')
+      if (use_pwf_jml) call comms_reduce(rmn_save_pwf_jml(1, 1, 1, 1), 3*num_wann*num_wann*sum(num_int_kpts_on_node), 'SUM')
       if (on_root) then
-        inquire(iolength=i) rmn_save_jml
-        open(999, file='rmn_save_jml.bin', form='unformatted', access='direct', recl=i)
-        write(999, rec=1) rmn_save_jml
+        inquire(iolength=i) rmn_save_jml_A
+        open(999, file='rmn_save_jml_A.bin', form='unformatted', access='direct', recl=i)
+        write(999, rec=1) rmn_save_jml_A
         close(999)
+        inquire(iolength=i) rmn_save_jml_D
+        open(999, file='rmn_save_jml_D.bin', form='unformatted', access='direct', recl=i)
+        write(999, rec=1) rmn_save_jml_D
+        close(999)
+        if (use_pwf_jml) then
+          inquire(iolength=i) rmn_save_pwf_jml
+          open(999, file='rmn_save_pwf_jml.bin', form='unformatted', access='direct', recl=i)
+          write(999, rec=1) rmn_save_pwf_jml
+          close(999)
+        endif
       endif
     end if
 
@@ -1544,7 +1573,7 @@ contains
 
   end subroutine berry_get_kubo_k
 
-  subroutine berry_get_sc_klist(kpt, sc_k_list, loop_xyz)
+  subroutine berry_get_sc_klist(kpt, sc_k_list, ik)
     !====================================================================!
     !                                                                    !
     !  Contribution from point k to the nonlinear shift current
@@ -1567,20 +1596,21 @@ contains
     use w90_parameters, only: num_wann, nfermi, kubo_nfreq, kubo_freq_list, fermi_energy_list, &
       kubo_smr_index, berry_kmesh, kubo_adpt_smr_fac, &
       kubo_adpt_smr_max, kubo_adpt_smr, kubo_eigval_max, &
-      kubo_smr_fixed_en_width, sc_phase_conv, sc_w_thr
+      kubo_smr_fixed_en_width, sc_phase_conv, sc_w_thr, use_pwf_jml
     use w90_postw90_common, only: pw90common_fourier_R_to_k_vec_dadb, &
       pw90common_fourier_R_to_k_new_second_d, pw90common_get_occ, &
-      pw90common_kmesh_spacing, pw90common_fourier_R_to_k_vec_dadb_TB_conv
+      pw90common_kmesh_spacing, pw90common_fourier_R_to_k_vec_dadb_TB_conv, &
+      pw90common_fourier_R_to_k_vec
     use w90_wan_ham, only: wham_get_eig_UU_HH_JJlist, wham_get_occ_mat_list, wham_get_D_h, &
       wham_get_eig_UU_HH_AA_sc, wham_get_eig_deleig, wham_get_D_h_P_value, &
       wham_get_eig_deleig_TB_conv, wham_get_eig_UU_HH_AA_sc_TB_conv
-    use w90_get_oper, only: AA_R
+    use w90_get_oper, only: AA_R, vel_r_pwf
     use w90_utility, only: utility_rotate, utility_zdotu
     ! Arguments
     !
     real(kind=dp), intent(in)                        :: kpt(3)
     real(kind=dp), intent(out), dimension(:, :, :)     :: sc_k_list
-    integer, intent(in) :: loop_xyz
+    integer, intent(in) :: ik
 
     complex(kind=dp), allocatable :: UU(:, :)
     complex(kind=dp), allocatable :: AA(:, :, :), AA_bar(:, :, :)
@@ -1592,6 +1622,7 @@ contains
     real(kind=dp), allocatable    :: eig(:)
     real(kind=dp), allocatable    :: eig_da(:, :)
     real(kind=dp), allocatable    :: occ(:)
+    complex(kind=dp), allocatable :: vel_k(:, :, :)
 
     complex(kind=dp)              :: sum_AD(3, 3), sum_HD(3, 3), r_mn(3), gen_r_nm(3)
     integer                       :: i, if, a, b, c, bc, n, m, r, ifreq, istart, iend
@@ -1613,6 +1644,7 @@ contains
     allocate (eig(num_wann))
     allocate (occ(num_wann))
     allocate (eig_da(num_wann, 3))
+    allocate (vel_k(num_wann, num_wann, 3))
 
     ! Initialize shift current array at point k
     sc_k_list = 0.d0
@@ -1758,10 +1790,27 @@ contains
         endif
 
         ! save matrix elements to array, written to file after the loop
-        rmn_save_jml(:, m, n, loop_xyz + 1) = r_mn(:)
+        rmn_save_jml_A(:, m, n, ik) = AA_bar(m, n, :)
+        rmn_save_jml_D(:, m, n, ik) = cmplx_i*D_h(m, n, :)
 
       enddo ! bands
     enddo ! bands
+
+    if (use_pwf_jml) then
+      call pw90common_fourier_R_to_k_vec(kpt, vel_r_pwf, OO_true=vel_k)
+      do i = 1, 3
+        vel_k(:, :, i) = utility_rotate(vel_k(:, :, i), UU, num_wann)
+      enddo
+      ! loop on initial and final bands
+      do n = 1, num_wann
+        do m = 1, num_wann
+          ! cycle diagonal matrix elements and bands above the maximum
+          if (n == m) cycle
+          if (eig(m) > kubo_eigval_max .or. eig(n) > kubo_eigval_max) cycle
+          rmn_save_pwf_jml(:, m, n, ik) = vel_k(m, n, :) / (eig(m) - eig(n)) / cmplx_i
+        enddo
+      enddo
+    endif
 
   end subroutine berry_get_sc_klist
 

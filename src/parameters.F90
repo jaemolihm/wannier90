@@ -222,6 +222,10 @@ module w90_parameters
   integer, public, save :: shc_bandshift_firstband
   real(kind=dp), public, save :: shc_bandshift_energyshift
 
+  ! JML: Perturbed Wannier function method
+  logical, public, save :: use_pwf_jml
+  ! END JML
+
   logical, public, save :: gyrotropic
   character(len=120), public, save :: gyrotropic_task
   integer, public, save :: gyrotropic_kmesh(3)
@@ -1329,6 +1333,11 @@ contains
     call param_get_keyword('shc_bandshift_energyshift', found, r_value=shc_bandshift_energyshift)
     if (shc_bandshift .and. (.not. found)) &
       call io_error('Error: shc_bandshift required but no shc_bandshift_energyshift provided')
+
+    ! JML: Perturbed Wannier function method
+    use_pwf_jml = .false.
+    call param_get_keyword('use_pwf_jml', found, l_value=use_pwf_jml)
+    ! END JML
 
     spin_moment = .false.
     call param_get_keyword('spin_moment', found, &
@@ -6205,6 +6214,10 @@ contains
     call comms_bcast(shc_bandshift, 1)
     call comms_bcast(shc_bandshift_firstband, 1)
     call comms_bcast(shc_bandshift_energyshift, 1)
+
+    ! JML: Perturbed Wannier function method
+    call comms_bcast(use_pwf_jml, 1)
+    ! END JML
 
     call comms_bcast(devel_flag, len(devel_flag))
     call comms_bcast(spin_moment, 1)

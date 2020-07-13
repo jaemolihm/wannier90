@@ -65,6 +65,8 @@ module w90_berry
   integer, parameter, public:: berry_alpha_beta_S(3, 3) = reshape((/1, 4, 5, 4, 2, 6, 5, 6, 3/), (/3, 3/))
 !(/  (/1,4,5/), (/ 4,2,6 /)  , (/ 5,6,3 /)   /)
 
+  complex(kind=dp), allocatable :: rmn_save_jml(:, :, :, :)
+
 contains
 
   !===========================================================!
@@ -151,7 +153,7 @@ contains
                          db1, db2, db3, fac, freq, rdum, vdum(3)
     integer           :: n, i, j, k, jk, ikpt, if, ispn, ierr, loop_x, loop_y, loop_z, &
                          loop_xyz, loop_adpt, adpt_counter_list(nfermi), ifreq, &
-                         file_unit
+                         file_unit, ik
     character(len=24) :: file_name
     logical           :: eval_ahc, eval_morb, eval_kubo, not_scannable, eval_sc, eval_shc
     logical           :: ladpt_kmesh
@@ -237,6 +239,11 @@ contains
       allocate (sc_list(3, 6, kubo_nfreq))
       sc_k_list = 0.0_dp
       sc_list = 0.0_dp
+      if (wanint_kpoint_file) then
+        allocate(rmn_save_jml(3, num_wann, num_wann, sum(num_int_kpts_on_node)))
+      else
+        allocate(rmn_save_jml(3, num_wann, num_wann, PRODUCT(berry_kmesh)))
+      endif
     endif
 
     if (eval_shc) then
@@ -363,6 +370,10 @@ contains
       ! zone, read from file 'kpoint.dat'
       !
       do loop_xyz = 1, num_int_kpts_on_node(my_node_id)
+        write(stdout,'(i8)', advance='no') loop_xyz
+        if (MOD(loop_xyz, 10) == 0) write(stdout, *)
+        flush(stdout)
+
         kpt(:) = int_kpts(:, loop_xyz)
         kweight = weight(loop_xyz)
         kweight_adpt = kweight/berry_curv_adpt_kmesh**3
@@ -418,7 +429,7 @@ contains
         endif
 
         if (eval_sc) then
-          call berry_get_sc_klist(kpt, sc_k_list)
+          call berry_get_sc_klist(kpt, sc_k_list, loop_xyz)
           sc_list = sc_list + sc_k_list*kweight
         end if
 
@@ -481,12 +492,14 @@ contains
       kweight = db1*db2*db3
       kweight_adpt = kweight/berry_curv_adpt_kmesh**3
 
-      write (stdout, '(a, I8, a)') 'Loop over ', PRODUCT(berry_kmesh)/num_nodes, ' k points'
+      write(stdout, '(a, I8, a)') 'Loop over ', PRODUCT(berry_kmesh) / num_nodes, ' k points'
 
+      ik = 0
       do loop_xyz = my_node_id, PRODUCT(berry_kmesh) - 1, num_nodes
+        ik = ik + 1
 
-        write (stdout, '(i8)', advance='no') loop_xyz/num_nodes + 1
-        if (MOD(loop_xyz/num_nodes + 1, 10) == 0) write (stdout, *)
+        write(stdout,'(i8)', advance='no') loop_xyz / num_nodes + 1
+        if (MOD(loop_xyz / num_nodes + 1, 10) == 0) write(stdout, *)
         flush(stdout)
 
         loop_x = loop_xyz/(berry_kmesh(2)*berry_kmesh(3))
@@ -549,7 +562,7 @@ contains
         endif
 
         if (eval_sc) then
-          call berry_get_sc_klist(kpt, sc_k_list)
+          call berry_get_sc_klist(kpt, sc_k_list, ik)
           sc_list = sc_list + sc_k_list*kweight
         end if
 
@@ -635,6 +648,17 @@ contains
 
     if (eval_sc) then
       call comms_reduce(sc_list(1, 1, 1), 3*6*kubo_nfreq, 'SUM')
+      if (wanint_kpoint_file) then
+        call comms_reduce(rmn_save_jml(1, 1, 1, 1), 3*num_wann*num_wann*sum(num_int_kpts_on_node), 'SUM')
+      else
+        call comms_reduce(rmn_save_jml(1, 1, 1, 1), 3*num_wann*num_wann*PRODUCT(berry_kmesh), 'SUM')
+      endif
+      if (on_root) then
+        inquire(iolength=i) rmn_save_jml
+        open(999, file='rmn_save_jml.bin', form='unformatted', access='direct', recl=i)
+        write(999, rec=1) rmn_save_jml
+        close(999)
+      endif
     end if
 
     if (eval_shc) then
@@ -1520,7 +1544,7 @@ contains
 
   end subroutine berry_get_kubo_k
 
-  subroutine berry_get_sc_klist(kpt, sc_k_list)
+  subroutine berry_get_sc_klist(kpt, sc_k_list, loop_xyz)
     !====================================================================!
     !                                                                    !
     !  Contribution from point k to the nonlinear shift current
@@ -1556,6 +1580,7 @@ contains
     !
     real(kind=dp), intent(in)                        :: kpt(3)
     real(kind=dp), intent(out), dimension(:, :, :)     :: sc_k_list
+    integer, intent(in) :: loop_xyz
 
     complex(kind=dp), allocatable :: UU(:, :)
     complex(kind=dp), allocatable :: AA(:, :, :), AA_bar(:, :, :)
@@ -1731,6 +1756,9 @@ contains
             utility_w0gauss_vec((eig(n) - eig(m) + omega(istart:iend))/eta_smr, kubo_smr_index)/eta_smr
           call DGER(18, iend - istart + 1, occ_fac, I_nm, 1, delta(istart:iend), 1, sc_k_list(:, :, istart:iend), 18)
         endif
+
+        ! save matrix elements to array, written to file after the loop
+        rmn_save_jml(:, m, n, loop_xyz + 1) = r_mn(:)
 
       enddo ! bands
     enddo ! bands

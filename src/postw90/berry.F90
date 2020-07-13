@@ -481,7 +481,14 @@ contains
       kweight = db1*db2*db3
       kweight_adpt = kweight/berry_curv_adpt_kmesh**3
 
+      write (stdout, '(a, I8, a)') 'Loop over ', PRODUCT(berry_kmesh)/num_nodes, ' k points'
+
       do loop_xyz = my_node_id, PRODUCT(berry_kmesh) - 1, num_nodes
+
+        write (stdout, '(i8)', advance='no') loop_xyz/num_nodes + 1
+        if (MOD(loop_xyz/num_nodes + 1, 10) == 0) write (stdout, *)
+        flush(stdout)
+
         loop_x = loop_xyz/(berry_kmesh(2)*berry_kmesh(3))
         loop_y = (loop_xyz - loop_x*(berry_kmesh(2) &
                                      *berry_kmesh(3)))/berry_kmesh(3)

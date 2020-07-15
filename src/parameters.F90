@@ -1342,15 +1342,15 @@ contains
     call param_get_keyword('use_pwf_jml', found, l_value=use_pwf_jml)
     ahc_dir = ''
     call param_get_keyword('ahc_dir', found, c_value=ahc_dir)
-    if (use_pwf_jml .and. .not. found) &
+    if (use_pwf_jml .and. (.not. found)) &
       call io_error('Error: ahc_dir must be specified to use use_pwf_jml')
     ahc_nbndskip = -1
     call param_get_keyword('ahc_nbndskip', found, i_value=ahc_nbndskip)
-    if (use_pwf_jml .and. .not. found) &
+    if (use_pwf_jml .and. (.not. found)) &
       call io_error('Error: ahc_nbndskip must be specified to use use_pwf_jml')
     ahc_nbnd_full = -1
     call param_get_keyword('ahc_nbnd_full', found, i_value=ahc_nbnd_full)
-    if (use_pwf_jml .and. .not. found) &
+    if (use_pwf_jml .and. (.not. found)) &
       call io_error('Error: ahc_nbnd_full must be specified to use use_pwf_jml')
     ! END JML
 
@@ -6230,10 +6230,6 @@ contains
     call comms_bcast(shc_bandshift_firstband, 1)
     call comms_bcast(shc_bandshift_energyshift, 1)
 
-    ! JML: Perturbed Wannier function method
-    call comms_bcast(use_pwf_jml, 1)
-    ! END JML
-
     call comms_bcast(devel_flag, len(devel_flag))
     call comms_bcast(spin_moment, 1)
     call comms_bcast(spin_axis_polar, 1)
@@ -6472,6 +6468,13 @@ contains
         if (ierr /= 0) call io_error('Error allocating lwindow in param_dist')
       endif
     endif
+
+    ! JML: Perturbed Wannier function method
+    call comms_bcast(use_pwf_jml, 1)
+    call comms_bcast(ahc_dir, 1)
+    call comms_bcast(ahc_nbndskip, 1)
+    call comms_bcast(ahc_nbnd_full, 1)
+    ! END JML
 
   end subroutine param_dist
 

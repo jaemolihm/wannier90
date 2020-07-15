@@ -469,6 +469,13 @@ contains
 
     endif
 
+    ! JML: Perturbed Wannier function method
+    call comms_bcast(use_pwf_jml, 1)
+    call comms_bcast(ahc_dir, 1)
+    call comms_bcast(ahc_nbndskip, 1)
+    call comms_bcast(ahc_nbnd_full, 1)
+    ! END JML
+
   end subroutine pw90common_wanint_param_dist
 
   !===========================================================!

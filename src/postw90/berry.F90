@@ -157,7 +157,7 @@ contains
     integer           :: n, i, j, k, jk, ikpt, if, ispn, ierr, loop_x, loop_y, loop_z, &
                          loop_xyz, loop_adpt, adpt_counter_list(nfermi), ifreq, &
                          file_unit, ik, nk
-    character(len=24) :: file_name
+    character(len=80) :: file_name
     logical           :: eval_ahc, eval_morb, eval_kubo, not_scannable, eval_sc, eval_shc
     logical           :: ladpt_kmesh
 
@@ -828,9 +828,9 @@ contains
           write (stdout, '(1x,a)') &
             '---------------------------------'
           file_name = trim(seedname)//'-ahc-fermiscan.dat'
-          write (stdout, '(/,3x,a)') '* '//file_name
+          write (stdout, '(/,3x,a)') '* ' // trim(file_name)
           file_unit = io_file_unit()
-          open (file_unit, FILE=file_name, STATUS='UNKNOWN', FORM='FORMATTED')
+          open (file_unit, FILE=trim(file_name), STATUS='UNKNOWN', FORM='FORMATTED')
         endif
         do if = 1, nfermi
           if (nfermi > 1) write (file_unit, '(4(F12.6,1x))') &
@@ -915,9 +915,9 @@ contains
           write (stdout, '(1x,a)') &
             '---------------------------------'
           file_name = trim(seedname)//'-morb-fermiscan.dat'
-          write (stdout, '(/,3x,a)') '* '//file_name
+          write (stdout, '(/,3x,a)') '* '// trim(file_name)
           file_unit = io_file_unit()
-          open (file_unit, FILE=file_name, STATUS='UNKNOWN', FORM='FORMATTED')
+          open (file_unit, FILE=trim(file_name), STATUS='UNKNOWN', FORM='FORMATTED')
         endif
         do if = 1, nfermi
           LCtil_list(:, :, if) = (img_list(:, :, if) &
@@ -988,8 +988,8 @@ contains
                       achar(119 + i)//achar(119 + j)//'.dat'
           file_name = trim(file_name)
           file_unit = io_file_unit()
-          write (stdout, '(/,3x,a)') '* '//file_name
-          open (file_unit, FILE=file_name, STATUS='UNKNOWN', FORM='FORMATTED')
+          write (stdout, '(/,3x,a)') '* '//trim(file_name)
+          open (file_unit, FILE=trim(file_name), STATUS='UNKNOWN', FORM='FORMATTED')
           do ifreq = 1, kubo_nfreq
             if (spin_decomp) then
               write (file_unit, '(9E16.8)') real(kubo_freq_list(ifreq), dp), &

@@ -704,7 +704,9 @@ contains
     !=========================================================!
 
     use w90_constants, only: dp, cmplx_0, cmplx_i, twopi
-    use w90_parameters, only: num_kpts, kpt_latt, num_wann, use_ws_distance
+    use w90_io, only: io_stopwatch
+    use w90_parameters, only: num_kpts, kpt_latt, num_wann, use_ws_distance, &
+      timing_level
     use w90_ws_distance, only: irdist_ws, crdist_ws, &
       wdist_ndeg, ws_translate_dist
 
@@ -720,6 +722,8 @@ contains
     integer          :: ir, i, j, ideg
     real(kind=dp)    :: rdotk
     complex(kind=dp) :: phase_fac
+
+    if (timing_level > 1 .and. on_root) call io_stopwatch('fourier: R_to_k', 1)
 
     if (use_ws_distance) CALL ws_translate_dist(nrpts, irvec)
 
@@ -758,6 +762,8 @@ contains
 
     enddo
 
+    if (timing_level > 1 .and. on_root) call io_stopwatch('fourier: R_to_k', 2)
+
   end subroutine pw90common_fourier_R_to_k
 
   ! ***NEW***
@@ -775,6 +781,7 @@ contains
     !=======================================================!
 
     use w90_constants, only: dp, cmplx_0, cmplx_i, twopi
+    use w90_io, only: io_stopwatch
     use w90_parameters, only: timing_level, num_kpts, kpt_latt, num_wann, use_ws_distance
     use w90_ws_distance, only: irdist_ws, crdist_ws, wdist_ndeg, ws_translate_dist
 
@@ -792,6 +799,8 @@ contains
     integer          :: ir, i, j, ideg
     real(kind=dp)    :: rdotk
     complex(kind=dp) :: phase_fac
+
+    if (timing_level > 1 .and. on_root) call io_stopwatch('fourier: R_to_k_new', 1)
 
     if (use_ws_distance) CALL ws_translate_dist(nrpts, irvec)
 
@@ -833,6 +842,8 @@ contains
                                           cmplx_i*crvec(3, ir)*phase_fac*OO_R(:, :, ir)
       endif
     enddo
+
+    if (timing_level > 1 .and. on_root) call io_stopwatch('fourier: R_to_k_new', 2)
 
   end subroutine pw90common_fourier_R_to_k_new
 
@@ -1066,7 +1077,9 @@ contains
     !====================================================================!
 
     use w90_constants, only: dp, cmplx_0, cmplx_i, twopi
-    use w90_parameters, only: num_kpts, kpt_latt, num_wann, use_ws_distance
+    use w90_io, only: io_stopwatch
+    use w90_parameters, only: num_kpts, kpt_latt, num_wann, use_ws_distance, &
+      timing_level
     use w90_ws_distance, only: irdist_ws, crdist_ws, wdist_ndeg, ws_translate_dist
 
     implicit none
@@ -1081,6 +1094,8 @@ contains
     integer          :: ir, i, j, ideg
     real(kind=dp)    :: rdotk
     complex(kind=dp) :: phase_fac
+
+    if (timing_level > 1 .and. on_root) call io_stopwatch('fourier: R_to_k_vec', 1)
 
     if (use_ws_distance) CALL ws_translate_dist(nrpts, irvec)
     if (present(OO_true)) OO_true = cmplx_0
@@ -1134,6 +1149,8 @@ contains
         endif
       endif
     enddo
+
+    if (timing_level > 1 .and. on_root) call io_stopwatch('fourier: R_to_k_vec', 2)
 
   end subroutine pw90common_fourier_R_to_k_vec
 

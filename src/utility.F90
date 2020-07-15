@@ -685,14 +685,20 @@ contains
     !                                                           !
     !===========================================================!
 
+    use w90_comms, only : on_root
     use w90_constants, only: dp
+    use w90_io, only: io_stopwatch
 
     integer          :: dim
     complex(kind=dp) :: utility_rotate(dim, dim)
     complex(kind=dp) :: mat(dim, dim)
     complex(kind=dp) :: rot(dim, dim)
 
+    if (on_root) call io_stopwatch('utility: rotate', 1)
+
     utility_rotate = matmul(matmul(transpose(conjg(rot)), mat), rot)
+
+    if (on_root) call io_stopwatch('utility: rotate', 2)
 
   end function utility_rotate
 
@@ -708,7 +714,9 @@ contains
     !                                                              !
     !==============================================================!
 
+    use w90_comms, only : on_root
     use w90_constants, only: dp
+    use w90_io, only: io_stopwatch
 
     integer, intent(in)             :: N
     logical, optional, intent(in)   :: reverse
@@ -716,6 +724,8 @@ contains
     complex(kind=dp), intent(in)    :: rot(N, N)
     complex(kind=dp)                :: tmp(N, N)
     logical                         :: rev
+
+    if (on_root) call io_stopwatch('utility: rotate_new', 1)
 
     if (.not. present(reverse)) then
       rev = .false.
@@ -730,6 +740,8 @@ contains
       call utility_zgemm_new(mat, rot, tmp, 'C', 'N')
       call utility_zgemm_new(tmp, rot, mat, 'C', 'N')
     end if
+
+    if (on_root) call io_stopwatch('utility: rotate_new', 1)
 
   end subroutine utility_rotate_new
 

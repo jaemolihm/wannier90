@@ -1708,12 +1708,13 @@ contains
           endif
         enddo
 
-        omega_q_cart(:, :, idir, jdir, ik) = omega_q_cart(:, :, idir, jdir, ik) + omega_q_cart_add
+        omega_q_cart(:, :, idir, jdir, ik) = omega_q_cart(:, :, idir, jdir, ik) &
+         + omega_q_cart_add * (0.5 / eV_au) ** 2
 
       enddo ! ik
 
       ! Unit conversion: QE is in Rydberg atomic units, W90 is in angstrom, eV.
-      omega_q_cart = omega_q_cart * (bohr_angstrom_internal * 0.5 / eV_au) ** 2
+      omega_q_cart = omega_q_cart * bohr_angstrom_internal ** 2
 
       ! ! JML: This corresponds to "both" (i.e. not using outer window for PWF)
       ! ! omega_q_cart nonzero only for frozen states

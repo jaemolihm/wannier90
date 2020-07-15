@@ -1818,8 +1818,8 @@ contains
 ! BEGIN JML perturbed Wannier functions -----------------------------------
   subroutine pwf_jml_get_omegak(kpt, UU, omega_k, delhh_svel, delhh_vel)
     use w90_parameters, only: num_wann
-    use w90_utility, only : utility_rotate
-    use w90_postw90_common, only: pw90common_fourier_R_to_k, pw90common_fourier_R_to_k_vec
+    use w90_utility, only : utility_rotate_new
+    use w90_postw90_common, only: pw90common_fourier_R_to_k_new, pw90common_fourier_R_to_k_vec
     use w90_get_oper, only : omega_r_pwf, svel_r_pwf, vel_r_pwf
 
     implicit none
@@ -1832,17 +1832,17 @@ contains
     complex(kind=dp) :: delhh_svel(num_wann, num_wann, 3)
     complex(kind=dp) :: delhh_vel(num_wann, num_wann, 3)
 
-    call pw90common_fourier_R_to_k(kpt, omega_r_pwf, omega_k, 0)
-    omega_k = utility_rotate(omega_k, UU, num_wann)
+    call pw90common_fourier_R_to_k_new(kpt, omega_r_pwf, OO=omega_k)
+    call utility_rotate_new(omega_k, UU, num_wann)
 
     call pw90common_fourier_R_to_k_vec(kpt, svel_r_pwf, OO_true=delhh_svel)
     do i = 1, 3
-      delhh_svel(:, :, i) = utility_rotate(delhh_svel(:, :, i), UU, num_wann)
+      call utility_rotate_new(delhh_svel(:, :, i), UU, num_wann)
     enddo
 
     call pw90common_fourier_R_to_k_vec(kpt, vel_r_pwf, OO_true=delhh_vel)
     do i = 1, 3
-      delhh_vel(:, :, i) = utility_rotate(delhh_vel(:, :, i), UU, num_wann)
+      call utility_rotate_new(delhh_vel(:, :, i), UU, num_wann)
     enddo
 
   end subroutine pwf_jml_get_omegak
@@ -1872,7 +1872,7 @@ contains
     !====================================================================!
 
     use w90_constants, only: dp, cmplx_0, cmplx_i
-    use w90_utility, only: utility_rotate
+    use w90_utility, only: utility_rotate_new
     use w90_parameters, only: num_wann, kubo_eigval_max, kubo_nfreq, &
       kubo_freq_list, kubo_adpt_smr, kubo_smr_fixed_en_width, &
       kubo_adpt_smr_max, kubo_adpt_smr_fac, berry_kmesh, &
@@ -1956,7 +1956,7 @@ contains
 
     call pw90common_fourier_R_to_k_vec(kpt, AA_R, OO_true=AA)
     do i = 1, 3
-      AA(:, :, i) = utility_rotate(AA(:, :, i), UU, num_wann)
+      call utility_rotate_new(AA(:, :, i), UU, num_wann)
     enddo
     AA = AA + cmplx_i*D_h ! Eq.(25) WYSV06
 
@@ -2061,7 +2061,7 @@ contains
       !====================================================================!
 
       use w90_constants, only: dp, cmplx_0, cmplx_i
-      use w90_utility, only: utility_rotate
+      use w90_utility, only: utility_rotate_new
       use w90_parameters, only: num_wann, shc_alpha, shc_gamma
       use w90_postw90_common, only: pw90common_fourier_R_to_k_new, &
         pw90common_fourier_R_to_k_vec
@@ -2079,13 +2079,11 @@ contains
       complex(kind=dp)    :: B_k(num_wann, num_wann)
       complex(kind=dp)    :: K_k(num_wann, num_wann)
       complex(kind=dp)    :: L_k(num_wann, num_wann)
-      complex(kind=dp)    :: S_w(num_wann, num_wann)
       complex(kind=dp)    :: S_k(num_wann, num_wann)
-      complex(kind=dp)    :: SR_w(num_wann, num_wann, 3)
+      complex(kind=dp)    :: SR_k(num_wann, num_wann)
       complex(kind=dp)    :: SR_alpha_k(num_wann, num_wann)
-      complex(kind=dp)    :: SHR_w(num_wann, num_wann, 3)
+      complex(kind=dp)    :: SHR_k(num_wann, num_wann)
       complex(kind=dp)    :: SHR_alpha_k(num_wann, num_wann)
-      complex(kind=dp)    :: SH_w(num_wann, num_wann, 3)
       complex(kind=dp)    :: SH_k(num_wann, num_wann)
       complex(kind=dp)    :: eig_mat(num_wann, num_wann)
       complex(kind=dp)    :: del_eig_mat(num_wann, num_wann)
@@ -2096,28 +2094,30 @@ contains
       !=========== S_k ===========
       ! < u_k | sigma_gamma | u_k >, QZYZ18 Eq.(25)
       ! QZYZ18 Eq.(36)
-      call pw90common_fourier_R_to_k_new(kpt, SS_R(:, :, :, shc_gamma), OO=S_w)
+      call pw90common_fourier_R_to_k_new(kpt, SS_R(:, :, :, shc_gamma), OO=S_k)
       ! QZYZ18 Eq.(30)
-      S_k = utility_rotate(S_w, UU, num_wann)
+      call utility_rotate_new(S_k, UU, num_wann)
 
       !=========== K_k ===========
       ! < u_k | sigma_gamma | \partial_alpha u_k >, QZYZ18 Eq.(26)
       ! QZYZ18 Eq.(37)
-      call pw90common_fourier_R_to_k_vec(kpt, SR_R(:, :, :, shc_gamma, :), OO_true=SR_w)
+      call pw90common_fourier_R_to_k_new(kpt, SR_R(:, :, :, shc_gamma, shc_alpha), OO=SR_k)
       ! QZYZ18 Eq.(31)
-      SR_alpha_k = -cmplx_i*utility_rotate(SR_w(:, :, shc_alpha), UU, num_wann)
+      call utility_rotate_new(SR_k, UU, num_wann)
+      SR_alpha_k = -cmplx_i * SR_k
       K_k = SR_alpha_k + matmul(S_k, D_alpha_h)
 
       !=========== L_k ===========
       ! < u_k | sigma_gamma.H | \partial_alpha u_k >, QZYZ18 Eq.(27)
       ! QZYZ18 Eq.(38)
-      call pw90common_fourier_R_to_k_vec(kpt, SHR_R(:, :, :, shc_gamma, :), OO_true=SHR_w)
+      call pw90common_fourier_R_to_k_new(kpt, SHR_R(:, :, :, shc_gamma, shc_alpha), OO=SHR_k)
       ! QZYZ18 Eq.(32)
-      SHR_alpha_k = -cmplx_i*utility_rotate(SHR_w(:, :, shc_alpha), UU, num_wann)
+      call utility_rotate_new(SHR_k, UU, num_wann)
+      SHR_alpha_k = -cmplx_i * SHR_k
       ! QZYZ18 Eq.(39)
-      call pw90common_fourier_R_to_k_vec(kpt, SH_R, OO_true=SH_w)
+      call pw90common_fourier_R_to_k_new(kpt, SH_R(:, :, :, shc_gamma), OO=SH_k)
       ! QZYZ18 Eq.(32)
-      SH_k = utility_rotate(SH_w(:, :, shc_gamma), UU, num_wann)
+      call utility_rotate_new(SH_k, UU, num_wann)
       L_k = SHR_alpha_k + matmul(SH_k, D_alpha_h)
 
       !=========== B_k ===========

@@ -224,6 +224,9 @@ module w90_parameters
 
   ! JML: Perturbed Wannier function method
   logical, public, save :: use_pwf_jml
+  character(len=256), public, save :: ahc_dir
+  integer, public, save :: ahc_nbnd_full
+  integer, public, save :: ahc_nbndskip
   ! END JML
 
   logical, public, save :: gyrotropic
@@ -1337,6 +1340,18 @@ contains
     ! JML: Perturbed Wannier function method
     use_pwf_jml = .false.
     call param_get_keyword('use_pwf_jml', found, l_value=use_pwf_jml)
+    ahc_dir = ''
+    call param_get_keyword('ahc_dir', found, c_value=ahc_dir)
+    if (use_pwf_jml .and. .not. found) &
+      call io_error('Error: ahc_dir must be specified to use use_pwf_jml')
+    ahc_nbndskip = -1
+    call param_get_keyword('ahc_nbndskip', found, i_value=ahc_nbndskip)
+    if (use_pwf_jml .and. .not. found) &
+      call io_error('Error: ahc_nbndskip must be specified to use use_pwf_jml')
+    ahc_nbnd_full = -1
+    call param_get_keyword('ahc_nbnd_full', found, i_value=ahc_nbnd_full)
+    if (use_pwf_jml .and. .not. found) &
+      call io_error('Error: ahc_nbnd_full must be specified to use use_pwf_jml')
     ! END JML
 
     spin_moment = .false.

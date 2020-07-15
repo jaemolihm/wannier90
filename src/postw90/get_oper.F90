@@ -1567,6 +1567,190 @@ contains
                         S, eigval(wm_a:wm_a + ns_a - 1, ik_a), H)
   end subroutine get_gauge_overlap_matrix
 
+  !============================================================================
+  subroutine get_omega_r_pwf_jml
+  !============================================================================
+  ! Transform Omega from coarse k to coarse R grid.
+  !
+  ! omega_q = omega_q_cart (from file)
+  !         + svel_inv_e_q.H * qmat * vel_inv_e_q
+  !
+  ! qmat = 1 - v_matrix * v_matrix.H
+  !  vel_inv_e_q = -1j *  vel_q_cart(i, j, ik) / (eigval(j, ik) - eigval(i, ik))
+  ! svel_inv_e_q = -1j * svel_q_cart(i, j, ik) / (eigval(j, ik) - eigval(i, ik))
+  !
+  !============================================================================
+    use w90_io, only : io_file_unit, io_error
+    use w90_comms, only : on_root, comms_bcast
+    use w90_constants, only : bohr_angstrom_internal, eV_au
+    use w90_parameters, only: num_bands, num_wann, ndimwin, num_kpts, &
+        have_disentangled, eigval, ahc_dir, ahc_nbnd_full, ahc_nbndskip, &
+        dis_froz_min, dis_froz_max
+    use w90_postw90_common, only: nrpts, v_matrix
+    use w90_utility, only : utility_zgemmm, utility_zgemm_new
+
+    implicit none
+
+    complex(kind=dp), allocatable :: omega_q_cart(:, :, :, :, :)
+    !! omega at coarse k grid. Computed by ahc.f90.
+    complex(kind=dp), allocatable :: vel_q_cart(:, :, :, :)
+    !! vel_q at coarse k grid. Computed by ahc.f90.
+    complex(kind=dp), allocatable :: svel_q_cart(:, :, :, :)
+    !! vel_q at coarse k grid. Computed by ahc.f90.
+    complex(kind=dp), allocatable :: omega_q(:, :, :)
+    !! omega at coarse k grid, in wannier basis
+
+    complex(kind=dp), allocatable :: vel_inv_e_q(:,:), svel_inv_e_q(:,:), &
+      omega_q_cart_add(:,:), qmat(:,:)
+    integer, allocatable :: num_states(:)
+    integer :: ik, file_unit, recl, ib1, ib2, ib, jb, idir, jdir
+
+    ! We assume ahc_nbnd for ph.x input is equal to num_bands (after exclusion) here.
+
+    if (allocated(omega_r_pwf)) then
+      return
+    endif
+
+    allocate(omega_r_pwf(num_wann, num_wann, nrpts))
+
+    if (on_root) then
+
+      idir = 1
+      jdir = 2
+
+      allocate (omega_q_cart(num_bands, num_bands, 3, 3, num_kpts))
+      allocate (vel_q_cart(ahc_nbnd_full, num_bands, 3, num_kpts))
+      allocate (svel_q_cart(ahc_nbnd_full, num_bands, 3, num_kpts))
+
+      allocate (omega_q(num_wann, num_wann, num_kpts))
+
+      allocate (omega_q_cart_add(num_bands, num_bands))
+      allocate (qmat(num_bands, num_bands))
+
+      allocate (vel_inv_e_q(num_bands, num_bands))
+      allocate (svel_inv_e_q(num_bands, num_bands))
+
+      allocate (num_states(num_kpts))
+
+      ! read omega_q_cart from ahc file
+      file_unit = io_file_unit()
+      inquire(iolength=recl) omega_q_cart(:, :, :, :, 1)
+      open (file_unit, file=trim(ahc_dir) // '/dsudu_mel.bin', &
+        form='unformatted', access='direct', recl=recl, status='old')
+      do ik = 1, num_kpts
+        read (file_unit, rec=ik) omega_q_cart(:, :, :, :, ik)
+      enddo
+      close (file_unit)
+
+      ! read vel_q_cart from ahc file
+      file_unit = io_file_unit()
+      inquire(iolength=recl) vel_q_cart(:, :, :, 1)
+      open (file_unit, file=trim(ahc_dir) // '/vel_mel.bin', &
+        form='unformatted', access='direct', recl=recl, status='old')
+      do ik = 1, num_kpts
+        read (file_unit, rec=ik) vel_q_cart(:, :, :, ik)
+      enddo
+      close (file_unit)
+
+      ! read svel_q_cart from ahc file
+      file_unit = io_file_unit()
+      inquire(iolength=recl) svel_q_cart(:, :, :, 1)
+      open (file_unit, file=trim(ahc_dir) // '/svel_mel.bin', &
+        form='unformatted', access='direct', recl=recl, status='old')
+      do ik = 1, num_kpts
+        read (file_unit, rec=ik) svel_q_cart(:, :, :, ik)
+      enddo
+      close (file_unit)
+
+      do ik = 1, num_kpts
+        if (have_disentangled) then
+          num_states(ik) = ndimwin(ik)
+        else
+          num_states(ik) = num_wann
+        endif
+      enddo
+
+      do ik = 1, num_kpts
+
+        omega_q_cart_add = (0.d0, 0.d0)
+
+        ! qmat = 1 - v_matrix * v_matrix.H
+        call utility_zgemm_new(v_matrix(:, :, ik), v_matrix(:, :, ik), qmat, 'N', 'C')
+        qmat = - qmat
+        do jb = 1, num_bands
+          qmat(jb, jb) = 1.d0 + qmat(jb, jb)
+        enddo
+
+        ! JML FIXME: Do we need the -1j factor??
+
+        ! vel_inv_e_q(i, j) = -1j * vel_q_cart(i, j, ik) / (eigval(j, ik) - eigval(i, ik))
+        vel_inv_e_q = (0.d0, 0.d0)
+        svel_inv_e_q = (0.d0, 0.d0)
+        do jb = 1, num_bands
+          do ib = 1, num_bands
+            if (abs(eigval(jb, ik) - eigval(ib, ik)) < 1.d-5) cycle
+            svel_inv_e_q(ib, jb) = svel_q_cart(ahc_nbndskip+ib, jb, idir, ik) / (eigval(jb, ik) - eigval(ib, ik))
+            vel_inv_e_q(ib, jb) = vel_q_cart(ahc_nbndskip+ib, jb, jdir, ik) / (eigval(jb, ik) - eigval(ib, ik))
+          enddo
+        enddo
+        ! vel_inv_e_q = (0.d0, -1.d0) * vel_inv_e_q
+        ! svel_inv_e_q = (0.d0, -1.d0) * svel_inv_e_q
+
+        ! add svel_inv_e_q.H * qmat * vel_inv_e_q to omega_q_cart_add
+
+        call utility_zgemmm(svel_inv_e_q, 'C', qmat, 'N', vel_inv_e_q, 'N', omega_q_cart_add)
+
+        ! omega_q_cart_add nonzero only for frozen states
+        do ib = 1, num_bands
+          if (eigval(ib, ik) > dis_froz_max .or. eigval(ib, ik) < dis_froz_min) then
+            omega_q_cart_add(ib, :) = (0.d0, 0.d0)
+            omega_q_cart_add(:, ib) = (0.d0, 0.d0)
+          endif
+        enddo
+
+        omega_q_cart(:, :, idir, jdir, ik) = omega_q_cart(:, :, idir, jdir, ik) + omega_q_cart_add
+
+      enddo ! ik
+
+      ! Unit conversion: QE is in Rydberg atomic units, W90 is in angstrom, eV.
+      omega_q_cart = omega_q_cart * (bohr_angstrom_internal * 0.5 / eV_au) ** 2
+
+      ! ! JML: This corresponds to "both" (i.e. not using outer window for PWF)
+      ! ! omega_q_cart nonzero only for frozen states
+      ! do ik = 1, num_kpts
+      !   do ib = 1, num_bands
+      !     if (eigval(ib, ik) > dis_froz_max .or. eigval(ib, ik) < dis_froz_min) then
+      !       omega_q_cart(ib, :, :, :, ik) = 0.d0
+      !       omega_q_cart(:, ib, :, :, ik) = 0.d0
+      !     endif
+      !   enddo
+      ! enddo
+
+      ! rotate omega_q_cart(:, :, 1, 2, :) from eigenbasis to wannier basis
+      ! FIXME: get_win_min
+
+      do ik = 1, num_kpts
+
+        call utility_zgemmm(v_matrix(1:num_states(ik), 1:num_wann, ik), 'C', &
+                            omega_q_cart(1:num_states(ik), 1:num_states(ik), idir, jdir, ik), 'N', &
+                            v_matrix(1:num_states(ik), 1:num_wann, ik), 'N', &
+                            omega_q(:, :, ik))
+      enddo
+
+      call fourier_q_to_R(omega_q, omega_r_pwf)
+
+      deallocate(vel_inv_e_q)
+      deallocate(svel_inv_e_q)
+      deallocate(num_states)
+      deallocate(omega_q)
+      deallocate(omega_q_cart)
+
+    endif ! on_root
+
+    call comms_bcast(omega_r_pwf(1, 1, 1), num_wann*num_wann*nrpts)
+
+  end subroutine get_omega_r_pwf_jml
+
   !==================================================
   subroutine get_vel_r_pwf_jml
     !==================================================
@@ -1576,7 +1760,7 @@ contains
     use w90_comms, only : on_root, comms_bcast
     use w90_constants, only : bohr_angstrom_internal, eV_au
     use w90_parameters, only: num_bands, num_wann, ndimwin, num_kpts, &
-        have_disentangled, eigval
+        have_disentangled, eigval, ahc_dir, ahc_nbnd_full, ahc_nbndskip
     use w90_postw90_common, only: nrpts, v_matrix
     use w90_utility, only : utility_zgemmm, utility_zgemm_new
 
@@ -1601,14 +1785,7 @@ contains
     integer, allocatable :: num_states(:)
     integer :: ik, file_unit, recl, ib1, ib2, ib, jb, idir
 
-    character(len=256) :: ahc_dir
-    integer :: num_bands_full, ahc_nbndskip
-
     ! We assume ahc_nbnd for ph.x input is equal to num_bands (after exclusion) here.
-
-    ahc_nbndskip = 20
-    num_bands_full = 50
-    ahc_dir = './ahc_dir/'
 
     if (allocated(vel_r_pwf)) then
       return
@@ -1619,8 +1796,8 @@ contains
       allocate(vel_r_pwf(num_wann, num_wann, nrpts, 3))
       allocate(svel_r_pwf(num_wann, num_wann, nrpts, 3))
 
-      allocate(vel_q_cart(num_bands_full, num_bands, 3, num_kpts))
-      allocate(svel_q_cart(num_bands_full, num_bands, 3, num_kpts))
+      allocate(vel_q_cart(ahc_nbnd_full, num_bands, 3, num_kpts))
+      allocate(svel_q_cart(ahc_nbnd_full, num_bands, 3, num_kpts))
 
       allocate(vel_q(num_bands, num_bands, num_kpts, 3))
       allocate(svel_q(num_bands, num_bands, num_kpts, 3))
@@ -1639,7 +1816,7 @@ contains
       ! read vel_q_cart from ahc file
       file_unit = io_file_unit()
       inquire(iolength=recl) vel_q_cart(:, :, :, 1)
-      open (file_unit, file=TRIM(ahc_dir) // 'vel_mel.bin', &
+      open (file_unit, file=TRIM(ahc_dir) // '/vel_mel.bin', &
         form='unformatted', access='direct', recl=recl, status='old')
       do ik = 1, num_kpts
         read (file_unit, rec=ik) vel_q_cart(:, :, :, ik)
@@ -1649,7 +1826,7 @@ contains
       ! read svel_q_cart from ahc file
       file_unit = io_file_unit()
       inquire(iolength=recl) svel_q_cart(:, :, :, 1)
-      open (file_unit, file=TRIM(ahc_dir) // 'svel_mel.bin', &
+      open (file_unit, file=TRIM(ahc_dir) // '/svel_mel.bin', &
         form='unformatted', access='direct', recl=recl, status='old')
       do ik = 1, num_kpts
         read (file_unit, rec=ik) svel_q_cart(:, :, :, ik)
@@ -1670,7 +1847,7 @@ contains
 
       do ik = 1, num_kpts
 
-        ! vel_inv_e_q(i, j) = -1j * -1j * vel_q_cart(i, j, ik) / ( eigval(j, ik) - eigval(i, ik) )
+        ! vel_inv_e_q(i, j) = -1j * vel_q_cart(i, j, ik) / ( eigval(j, ik) - eigval(i, ik) )
         allocate (vel_inv_e_q(num_bands, num_bands))
         allocate (svel_inv_e_q(num_bands, num_bands))
         vel_inv_e_q = (0.d0, 0.d0)
@@ -1684,11 +1861,6 @@ contains
         enddo
         vel_inv_e_q = (0.d0, -1.d0) * vel_inv_e_q
         svel_inv_e_q = (0.d0, -1.d0) * svel_inv_e_q
-
-        if (ik == 1) then
-          print*, 'svel_inv_e_q(1, 3, 1) = ', svel_inv_e_q(1, 3)
-          print*, ' vel_inv_e_q(1, 3, 1) = ',  vel_inv_e_q(1, 3)
-        endif
 
         ! qmat = 1 - v_matrix * v_matrix.H
         call utility_zgemm_new(v_matrix(:,:,ik), v_matrix(:,:,ik), qmat, 'N', 'C')
@@ -1725,11 +1897,6 @@ contains
           enddo
         enddo
 
-        if (ik == 1) then
-          print*, 'svel_q_add(1, 11, 1) = ', svel_q_add(1, 11)
-          print*, ' vel_q_add(1, 11, 1) = ',  vel_q_add(1, 11)
-        endif
-
         ! vel_q(:, :, ik) = vel_q(:, :, ik) + vel_q_add
         ! svel_q(:, :, ik) = svel_q(:, :, ik) + svel_q_add
 
@@ -1745,21 +1912,21 @@ contains
 
       enddo ! ik
 
-      ! change unit: pwscf is in bohr unit, w90 is in angstrom
+      ! Unit conversion: QE is in Rydberg atomic units, W90 is in angstrom, eV.
       vel_q = vel_q * bohr_angstrom_internal * 0.5 / eV_au
       svel_q = svel_q * bohr_angstrom_internal * 0.5 / eV_au
 
       ! rotate vel_q from eigenbasis to wannier basis
       ! FIXME: get_win_min
 
-      inquire(iolength=ik) vel_q
-      open(666, file='debug_vel_q.bin', form='unformatted', access='direct',recl=ik)
-      write(666, rec=1) vel_q
-      close(666)
-      inquire(iolength=ik) svel_q
-      open(666, file='debug_svel_q.bin', form='unformatted', access='direct',recl=ik)
-      write(666, rec=1) svel_q
-      close(666)
+      ! inquire(iolength=ik) vel_q
+      ! open(666, file='debug_vel_q.bin', form='unformatted', access='direct',recl=ik)
+      ! write(666, rec=1) vel_q
+      ! close(666)
+      ! inquire(iolength=ik) svel_q
+      ! open(666, file='debug_svel_q.bin', form='unformatted', access='direct',recl=ik)
+      ! write(666, rec=1) svel_q
+      ! close(666)
 
       do idir = 1, 3
         do ik = 1, num_kpts
@@ -1775,21 +1942,18 @@ contains
         enddo
       enddo
 
-      inquire(iolength=ik) vel_q_w
-      open(666, file='debug_vel_q_w.bin', form='unformatted', access='direct',recl=ik)
-      write(666, rec=1) vel_q_w
-      close(666)
-      inquire(iolength=ik) svel_q_w
-      open(666, file='debug_svel_q_w.bin', form='unformatted', access='direct',recl=ik)
-      write(666, rec=1) svel_q_w
-      close(666)
-      inquire(iolength=ik) v_matrix
-      open(666, file='debug_v_matrix.bin', form='unformatted', access='direct',recl=ik)
-      write(666, rec=1) v_matrix
-      close(666)
-
-      print*, 'vel_q_w(1,3,1,2) = ', vel_q_w(1,3,1,2)
-      print*, 'svel_q_w(1,3,1,1) = ', svel_q_w(1,3,1,1)
+      ! inquire(iolength=ik) vel_q_w
+      ! open(666, file='debug_vel_q_w.bin', form='unformatted', access='direct',recl=ik)
+      ! write(666, rec=1) vel_q_w
+      ! close(666)
+      ! inquire(iolength=ik) svel_q_w
+      ! open(666, file='debug_svel_q_w.bin', form='unformatted', access='direct',recl=ik)
+      ! write(666, rec=1) svel_q_w
+      ! close(666)
+      ! inquire(iolength=ik) v_matrix
+      ! open(666, file='debug_v_matrix.bin', form='unformatted', access='direct',recl=ik)
+      ! write(666, rec=1) v_matrix
+      ! close(666)
 
       do idir = 1, 3
         call fourier_q_to_R(vel_q_w(:, :, :, idir), vel_r_pwf(:, :, :, idir))

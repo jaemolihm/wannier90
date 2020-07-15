@@ -107,7 +107,7 @@ contains
       shc_bandshift, shc_bandshift_firstband, shc_bandshift_energyshift, &
       use_pwf_jml
     use w90_get_oper, only: get_HH_R, get_AA_R, get_BB_R, get_CC_R, &
-      get_SS_R, get_SHC_R, get_vel_r_pwf_jml
+      get_SS_R, get_SHC_R, get_vel_r_pwf_jml, get_omega_r_pwf_jml
 
     real(kind=dp), allocatable    :: adkpt(:, :)
 
@@ -283,6 +283,7 @@ contains
 
     if (use_pwf_jml) then
       call get_vel_r_pwf_jml
+      call get_omega_r_pwf_jml
     endif
 
     if (on_root) then
@@ -391,9 +392,9 @@ contains
       ! zone, read from file 'kpoint.dat'
       !
       do loop_xyz = 1, num_int_kpts_on_node(my_node_id)
-        write(stdout,'(i8)', advance='no') loop_xyz
-        if (MOD(loop_xyz, 10) == 0) write(stdout, *)
-        flush(stdout)
+        ! write(stdout,'(i8)', advance='no') loop_xyz
+        ! if (MOD(loop_xyz, 10) == 0) write(stdout, *)
+        ! flush(stdout)
 
         kpt(:) = int_kpts(:, loop_xyz)
         kweight = weight(loop_xyz)
@@ -519,9 +520,9 @@ contains
       do loop_xyz = my_node_id, PRODUCT(berry_kmesh) - 1, num_nodes
         ik = ik + 1
 
-        write(stdout,'(i8)', advance='no') loop_xyz / num_nodes + 1
-        if (MOD(loop_xyz / num_nodes + 1, 10) == 0) write(stdout, *)
-        flush(stdout)
+        ! write(stdout,'(i8)', advance='no') loop_xyz / num_nodes + 1
+        ! if (MOD(loop_xyz / num_nodes + 1, 10) == 0) write(stdout, *)
+        ! flush(stdout)
 
         loop_x = loop_xyz/(berry_kmesh(2)*berry_kmesh(3))
         loop_y = (loop_xyz - loop_x*(berry_kmesh(2) &
@@ -1814,6 +1815,39 @@ contains
 
   end subroutine berry_get_sc_klist
 
+! BEGIN JML perturbed Wannier functions -----------------------------------
+  subroutine pwf_jml_get_omegak(kpt, UU, omega_k, delhh_svel, delhh_vel)
+    use w90_parameters, only: num_wann
+    use w90_utility, only : utility_rotate
+    use w90_postw90_common, only: pw90common_fourier_R_to_k, pw90common_fourier_R_to_k_vec
+    use w90_get_oper, only : omega_r_pwf, svel_r_pwf, vel_r_pwf
+
+    implicit none
+
+    ! args
+    integer :: i
+    real(kind=dp) :: kpt(3)
+    complex(kind=dp) :: UU(num_wann, num_wann)
+    complex(kind=dp) :: omega_k(num_wann, num_wann)
+    complex(kind=dp) :: delhh_svel(num_wann, num_wann, 3)
+    complex(kind=dp) :: delhh_vel(num_wann, num_wann, 3)
+
+    call pw90common_fourier_R_to_k(kpt, omega_r_pwf, omega_k, 0)
+    omega_k = utility_rotate(omega_k, UU, num_wann)
+
+    call pw90common_fourier_R_to_k_vec(kpt, svel_r_pwf, OO_true=delhh_svel)
+    do i = 1, 3
+      delhh_svel(:, :, i) = utility_rotate(delhh_svel(:, :, i), UU, num_wann)
+    enddo
+
+    call pw90common_fourier_R_to_k_vec(kpt, vel_r_pwf, OO_true=delhh_vel)
+    do i = 1, 3
+      delhh_vel(:, :, i) = utility_rotate(delhh_vel(:, :, i), UU, num_wann)
+    enddo
+
+  end subroutine pwf_jml_get_omegak
+! END JML perturbed Wannier functions -----------------------------------
+
   subroutine berry_get_shc_klist(kpt, shc_k_fermi, shc_k_freq, shc_k_band)
     !====================================================================!
     !                                                                    !
@@ -1843,7 +1877,8 @@ contains
       kubo_freq_list, kubo_adpt_smr, kubo_smr_fixed_en_width, &
       kubo_adpt_smr_max, kubo_adpt_smr_fac, berry_kmesh, &
       fermi_energy_list, nfermi, shc_alpha, shc_beta, shc_gamma, &
-      shc_bandshift, shc_bandshift_firstband, shc_bandshift_energyshift
+      shc_bandshift, shc_bandshift_firstband, shc_bandshift_energyshift, &
+      use_pwf_jml
     use w90_postw90_common, only: pw90common_get_occ, &
       pw90common_fourier_R_to_k_vec, pw90common_kmesh_spacing
     use w90_wan_ham, only: wham_get_D_h, wham_get_eig_deleig
@@ -1864,8 +1899,13 @@ contains
     complex(kind=dp), allocatable :: UU(:, :)
     complex(kind=dp), allocatable :: D_h(:, :, :)
     complex(kind=dp), allocatable :: AA(:, :, :)
-
     complex(kind=dp)              :: js_k(num_wann, num_wann)
+
+    ! JML: pwf
+    complex(kind=dp), allocatable :: omega_k(:, :)
+    complex(kind=dp), allocatable :: delhh_svel(:, :, :)
+    complex(kind=dp), allocatable :: delhh_vel(:, :, :)
+
 
     ! Adaptive smearing
     !
@@ -1884,6 +1924,11 @@ contains
     allocate (UU(num_wann, num_wann))
     allocate (D_h(num_wann, num_wann, 3))
     allocate (AA(num_wann, num_wann, 3))
+
+    ! JML: pwf
+    allocate (omega_k(num_wann, num_wann))
+    allocate (delhh_svel(num_wann, num_wann, 3))
+    allocate (delhh_vel(num_wann, num_wann, 3))
 
     lfreq = .false.
     lfermi = .false.
@@ -1914,6 +1959,9 @@ contains
       AA(:, :, i) = utility_rotate(AA(:, :, i), UU, num_wann)
     enddo
     AA = AA + cmplx_i*D_h ! Eq.(25) WYSV06
+
+    if (use_pwf_jml) call pwf_jml_get_omegak(kpt, UU, omega_k, delhh_svel, delhh_vel)
+
 
     call berry_get_js_k(kpt, eig, del_eig(:, shc_alpha), &
                         D_h(:, :, shc_alpha), UU, js_k)
@@ -1947,6 +1995,11 @@ contains
         !this will calculate AHC
         !prod = -rfac*cmplx_i*AA(n, m, shc_alpha) * rfac*cmplx_i*AA(m, n, shc_beta)
         prod = js_k(n, m)*cmplx_i*rfac*AA(m, n, shc_beta)
+
+        if (use_pwf_jml) then
+          prod = delhh_svel(n, m, 1) * delhh_vel(m, n, 2)
+        endif
+
         if (kubo_adpt_smr) then
           ! Eq.(35) YWVS07
           vdum(:) = del_eig(m, :) - del_eig(n, :)
@@ -1970,7 +2023,10 @@ contains
 
       if (lfermi) then
         do i = 1, nfermi
-          shc_k_fermi(i) = shc_k_fermi(i) + occ_fermi(n, i)*omega
+          shc_k_fermi(i) = shc_k_fermi(i) + occ_fermi(n, i) * omega
+          if (use_pwf_jml) shc_k_fermi(i) = shc_k_fermi(i) &
+            + (-2.d0) * occ_fermi(n, i) * aimag(omega_k(n, n)) ! JML PWF
+          ! -2.0 because that is in rfac
         end do
       else if (lfreq) then
         shc_k_freq = shc_k_freq + occ_freq(n)*omega_list
@@ -2139,6 +2195,7 @@ contains
           end if
         end do
       end if
+      flush(stdout)
     end if ! on_root
 
   end subroutine berry_print_progress

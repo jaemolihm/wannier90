@@ -83,7 +83,7 @@ contains
       crvec, nrpts_pw90, irvec_pw90, crvec_pw90
 
     integer                       :: i, j, n, m, ii, ik, winmin_q, file_unit, &
-                                     ir, jr, io, idum, ideg, ivdum(3), ivdum_old(3)
+                                     ir, io, idum, ivdum(3), ivdum_old(3)
     integer, allocatable          :: num_states(:)
     real(kind=dp)                 :: rdum_real, rdum_imag
     complex(kind=dp), allocatable :: HH_q(:, :, :)
@@ -548,10 +548,9 @@ contains
       seedname
     use w90_comms, only: on_root, comms_bcast
 
-    integer          :: idir, n, m, nn, i, ii, j, jj, &
-                        ik, ik2, inn, nnl, nnm, nnn, &
-                        winmin_q, winmin_qb, ncount, &
-                        nb_tmp, nkp_tmp, nntot_tmp, mmn_in
+    integer          :: idir, n, m, nn, ik, ik2, inn, nnl, nnm, nnn, &
+                        winmin_q, winmin_qb, ncount, nb_tmp, nkp_tmp, &
+                        nntot_tmp, mmn_in
 
     complex(kind=dp), allocatable :: S_o(:, :)
     complex(kind=dp), allocatable :: BB_q(:, :, :, :)
@@ -702,7 +701,7 @@ contains
       seedname
     use w90_comms, only: on_root, comms_bcast
 
-    integer          :: i, j, ii, jj, m, n, a, b, nn1, nn2, ik, nb_tmp, nkp_tmp, &
+    integer          :: m, n, a, b, nn1, nn2, ik, nb_tmp, nkp_tmp, &
                         nntot_tmp, uHu_in, qb1, qb2, winmin_qb1, winmin_qb2
 
     integer, allocatable          :: num_states(:)
@@ -1031,8 +1030,8 @@ contains
                                      spn_temp(:, :), SS_R_temp(:, :, :, :)
     real(kind=dp)                 :: s_real, s_img
     integer, allocatable          :: num_states(:)
-    integer                       :: i, j, ii, jj, m, n, spn_in, ik, is, &
-                                     winmin, nb_tmp, nkp_tmp, ierr, s, counter
+    integer                       :: m, n, spn_in, ik, is, nb_tmp, nkp_tmp, &
+                                     ierr, s, counter
     character(len=60)             :: header
 
     if (timing_level > 1 .and. on_root) call io_stopwatch('get_oper: get_SS_R', 1)
@@ -1173,10 +1172,9 @@ contains
 
     use w90_constants, only: dp, cmplx_0, cmplx_i
     use w90_parameters, only: num_kpts, nntot, num_wann, wb, bk, timing_level, &
-      num_bands, ndimwin, nnlist, have_disentangled, &
-      transl_inv, nncell, spn_formatted, eigval, &
-      scissors_shift, num_valence_bands, &
-      shc_bandshift, shc_bandshift_firstband, shc_bandshift_energyshift
+      num_bands, ndimwin, nnlist, have_disentangled, nncell, spn_formatted, &
+      eigval, scissors_shift, num_valence_bands, shc_bandshift, &
+      shc_bandshift_firstband, shc_bandshift_energyshift
     use w90_postw90_common, only: nrpts, nrpts_pw90
     use w90_io, only: stdout, io_file_unit, io_error, io_stopwatch, &
       seedname
@@ -1204,14 +1202,11 @@ contains
     real(kind=dp)                 :: s_real, s_img
     integer                       :: spn_in, counter, ierr, s, is
 
-    integer                       :: n, m, i, j, &
-                                     ik, ik2, ik_prev, nn, inn, nnl, nnm, nnn, &
-                                     idir, ncount, nn_count, mmn_in, &
-                                     nb_tmp, nkp_tmp, nntot_tmp, file_unit, &
-                                     ir, io, ivdum(3), ivdum_old(3)
+    integer                       :: n, m, ik, ik2, ik_prev, nn, inn, nnl, &
+                                     nnm, nnn, idir, ncount, nn_count, &
+                                     mmn_in, nb_tmp, nkp_tmp, nntot_tmp
     integer, allocatable          :: num_states(:)
-    real(kind=dp)                 :: m_real, m_imag, rdum1_real, rdum1_imag, &
-                                     rdum2_real, rdum2_imag, rdum3_real, rdum3_imag
+    real(kind=dp)                 :: m_real, m_imag
     logical                       :: nn_found
     character(len=60)             :: header
 
@@ -1342,9 +1337,9 @@ contains
       allocate (SR_q(num_wann, num_wann, num_kpts, 3, 3))
       allocate (SHR_q(num_wann, num_wann, num_kpts, 3, 3))
       allocate (SH_q(num_wann, num_wann, num_kpts, 3))
-      allocate (SR_R_temp(num_wann, num_wann, nrpts_pw90, 3, 3))
-      allocate (SHR_R_temp(num_wann, num_wann, nrpts_pw90, 3, 3))
-      allocate (SH_R_temp(num_wann, num_wann, nrpts_pw90, 3))
+      allocate (SR_R_temp(num_wann, num_wann, nrpts, 3, 3))
+      allocate (SHR_R_temp(num_wann, num_wann, nrpts, 3, 3))
+      allocate (SH_R_temp(num_wann, num_wann, nrpts, 3))
       allocate (S_o(num_bands, num_bands))
 
       mmn_in = io_file_unit()
@@ -1649,8 +1644,7 @@ contains
     use w90_constants, only: dp, cmplx_0
     use w90_ws_distance, only: wdist_ndeg
     use w90_parameters, only: num_wann, use_ws_distance
-    use w90_postw90_common, only: nrpts, ndegen, nrpts_pw90, irvec_pw90, &
-      ir_ind_ws_to_pw90
+    use w90_postw90_common, only: nrpts, ndegen, nrpts_pw90, ir_ind_ws_to_pw90
 
     complex(kind=dp), intent(in) :: op_R(num_wann, num_wann, nrpts)
     !! operator in real-space grid, before applying ndegen

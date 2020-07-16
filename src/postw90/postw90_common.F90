@@ -93,7 +93,7 @@ contains
     use w90_parameters, only: real_lattice, effective_model, num_wann, use_ws_distance
     use w90_ws_distance, only: ws_translate_dist
 
-    integer        :: ierr, i, j, k, ikpt, ir, file_unit, num_wann_loc
+    integer        :: ierr, ir, file_unit, num_wann_loc
 
     ! Find nrpts, the number of points in the Wigner-Seitz cell
     !
@@ -708,7 +708,7 @@ contains
 
     use w90_constants, only: dp, cmplx_0, cmplx_i, twopi
     use w90_io, only: io_stopwatch
-    use w90_parameters, only: timing_level, num_kpts, kpt_latt, num_wann
+    use w90_parameters, only: timing_level
 
     implicit none
 
@@ -766,21 +766,24 @@ contains
     !=======================================================!
 
     use w90_constants, only: dp, cmplx_0, cmplx_i, twopi
-    use w90_parameters, only: timing_level, num_kpts, kpt_latt, num_wann
+    use w90_io, only: io_stopwatch
+    use w90_parameters, only: timing_level
 
     implicit none
 
     ! Arguments
     !
-    real(kind=dp)                                                 :: kpt(3)
-    complex(kind=dp), dimension(:, :, :), intent(in)                :: OO_R
+    real(kind=dp)                                                  :: kpt(3)
+    complex(kind=dp), dimension(:, :, :), intent(in)               :: OO_R
     complex(kind=dp), optional, dimension(:, :), intent(out)       :: OO
-    complex(kind=dp), optional, dimension(:, :, :), intent(out)     :: OO_da
-    complex(kind=dp), optional, dimension(:, :, :, :), intent(out)   :: OO_dadb
+    complex(kind=dp), optional, dimension(:, :, :), intent(out)    :: OO_da
+    complex(kind=dp), optional, dimension(:, :, :, :), intent(out) :: OO_dadb
 
     integer          :: ir, a, b
     real(kind=dp)    :: rdotk
     complex(kind=dp) :: phase_fac
+
+    if (timing_level > 2 .and. on_root) call io_stopwatch('fourier: R_to_k_new_second_d', 1)
 
     if (present(OO)) OO = cmplx_0
     if (present(OO_da)) OO_da = cmplx_0
@@ -809,6 +812,8 @@ contains
 
     enddo
 
+    if (timing_level > 2 .and. on_root) call io_stopwatch('fourier: R_to_k_new_second_d', 2)
+
   end subroutine pw90common_fourier_R_to_k_new_second_d
 
   subroutine pw90common_fourier_R_to_k_new_second_d_TB_conv(kpt, OO_R, OO, OO_da, OO_dadb)
@@ -828,9 +833,10 @@ contains
     !=======================================================!
 
     use w90_constants, only: dp, cmplx_0, cmplx_i, twopi
-    use w90_parameters, only: timing_level, num_kpts, kpt_latt, num_wann, &
-      wannier_centres, recip_lattice
+    use w90_parameters, only: timing_level, num_wann, recip_lattice, &
+      wannier_centres
     use w90_utility, only: utility_cart_to_frac
+    use w90_io, only: io_stopwatch
 
     implicit none
 
@@ -842,11 +848,13 @@ contains
     complex(kind=dp), optional, dimension(:, :, :), intent(out)    :: OO_da
     complex(kind=dp), optional, dimension(:, :, :, :), intent(out) :: OO_dadb
 
-    integer          :: ir, i, j, ideg, a, b
+    integer          :: ir, i, j, a, b
     real(kind=dp)    :: rdotk
     complex(kind=dp) :: phase_fac
     real(kind=dp)    :: wannier_centres_frac(3, num_wann)
     real(kind=dp)    :: r_sum(3)
+
+    if (timing_level > 2 .and. on_root) call io_stopwatch('fourier: R_to_k_new_second_d_TB_conv', 1)
 
     r_sum = 0.d0
 
@@ -894,6 +902,8 @@ contains
       enddo ! j
     enddo ! ir
 
+    if (timing_level > 2 .and. on_root) call io_stopwatch('fourier: R_to_k_new_second_d_TB_conv', 2)
+
   end subroutine pw90common_fourier_R_to_k_new_second_d_TB_conv
 
   !=========================================================!
@@ -907,7 +917,7 @@ contains
 
     use w90_constants, only: dp, cmplx_0, cmplx_i, twopi
     use w90_io, only: io_stopwatch
-    use w90_parameters, only: num_kpts, kpt_latt, num_wann, timing_level
+    use w90_parameters, only: timing_level
 
     implicit none
 
@@ -915,10 +925,10 @@ contains
     !
     real(kind=dp)                                     :: kpt(3)
     complex(kind=dp), dimension(:, :, :, :), intent(in)  :: OO_R
-    complex(kind=dp), optional, dimension(:, :, :), intent(out)   :: OO_true
-    complex(kind=dp), optional, dimension(:, :, :), intent(out)   :: OO_pseudo
+    complex(kind=dp), optional, dimension(:, :, :), intent(out) :: OO_true
+    complex(kind=dp), optional, dimension(:, :, :), intent(out) :: OO_pseudo
 
-    integer          :: ir, i, j
+    integer          :: ir
     real(kind=dp)    :: rdotk
     complex(kind=dp) :: phase_fac
 
@@ -969,20 +979,23 @@ contains
     !====================================================================!
 
     use w90_constants, only: dp, cmplx_0, cmplx_i, twopi
-    use w90_parameters, only: num_kpts, kpt_latt, num_wann
+    use w90_io, only: io_stopwatch
+    use w90_parameters, only: timing_level
 
     implicit none
 
     ! Arguments
     !
-    real(kind=dp)                                     :: kpt(3)
-    complex(kind=dp), dimension(:, :, :, :), intent(in)  :: OO_R
-    complex(kind=dp), optional, dimension(:, :, :), intent(out)     :: OO_da
-    complex(kind=dp), optional, dimension(:, :, :, :), intent(out)   :: OO_dadb
+    real(kind=dp)                                                  :: kpt(3)
+    complex(kind=dp), dimension(:, :, :, :), intent(in)            :: OO_R
+    complex(kind=dp), optional, dimension(:, :, :), intent(out)    :: OO_da
+    complex(kind=dp), optional, dimension(:, :, :, :), intent(out) :: OO_dadb
 
     integer          :: ir, a, b
     real(kind=dp)    :: rdotk
     complex(kind=dp) :: phase_fac
+
+    if (timing_level > 2 .and. on_root) call io_stopwatch('fourier: R_to_k_vec_dadb', 1)
 
     if (present(OO_da)) OO_da = cmplx_0
     if (present(OO_dadb)) OO_dadb = cmplx_0
@@ -1007,6 +1020,8 @@ contains
       endif
 
     enddo
+
+    if (timing_level > 2 .and. on_root) call io_stopwatch('fourier: R_to_k_vec_dadb', 1)
 
   end subroutine pw90common_fourier_R_to_k_vec_dadb
 
@@ -1039,16 +1054,17 @@ contains
     !=========================================================================!
 
     use w90_constants, only: dp, cmplx_0, cmplx_i, twopi
-    use w90_parameters, only: num_kpts, kpt_latt, num_wann, wannier_centres, &
-      recip_lattice
+    use w90_io, only: io_stopwatch
+    use w90_parameters, only: timing_level, num_wann, recip_lattice, &
+      wannier_centres
     use w90_utility, only: utility_cart_to_frac
 
     implicit none
 
     ! Arguments
     !
-    real(kind=dp)                                     :: kpt(3)
-    complex(kind=dp), dimension(:, :, :, :), intent(in)  :: OO_R
+    real(kind=dp)                                                  :: kpt(3)
+    complex(kind=dp), dimension(:, :, :, :), intent(in)            :: OO_R
     complex(kind=dp), optional, dimension(:, :, :), intent(out)    :: OO_da
     complex(kind=dp), optional, dimension(:, :, :, :), intent(out) :: OO_dadb
 
@@ -1057,6 +1073,8 @@ contains
     complex(kind=dp) :: phase_fac
     real(kind=dp)    :: wannier_centres_frac(3, num_wann)
     real(kind=dp)    :: r_sum(3)
+
+    if (timing_level > 2 .and. on_root) call io_stopwatch('fourier: R_to_k_vec_dadb_TB_conv', 1)
 
     r_sum = 0.d0
 
@@ -1137,6 +1155,8 @@ contains
         enddo ! i
       enddo ! j
     enddo ! ir
+
+    if (timing_level > 2 .and. on_root) call io_stopwatch('fourier: R_to_k_vec_dadb_TB_conv', 2)
 
   end subroutine pw90common_fourier_R_to_k_vec_dadb_TB_conv
 

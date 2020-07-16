@@ -494,7 +494,7 @@ contains
 
     ! Misc/Dummy
     !
-    integer          :: i, j, loop_f, min_f, max_f, num_s_steps
+    integer          :: i, j, loop_f, min_f, max_f
     real(kind=dp)    :: rdum, spn_nk(num_wann), alpha_sq, beta_sq
     real(kind=dp)    :: binwidth, r_num_elec_per_state
     logical          :: DoSmearing

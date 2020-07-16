@@ -62,8 +62,8 @@ contains
 
     integer, dimension(0:num_nodes - 1) :: counts, displs
 
-    integer           :: i, j, n, num_paths, num_spts, loop_path, loop_kpt, &
-                         total_pts, counter, loop_i, dataunit, gnuunit, pyunit, &
+    integer           :: i, j, n, num_paths, num_spts, loop_kpt, &
+                         total_pts, loop_i, dataunit, gnuunit, pyunit, &
                          my_num_pts
     real(kind=dp)     :: ymin, ymax, kpt(3), spn_k(num_wann), &
                          imf_k_list(3, 3, nfermi), img_k_list(3, 3, nfermi), &

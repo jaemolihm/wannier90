@@ -163,7 +163,6 @@ contains
 
     ! Misc/Dummy
     !
-    integer          :: is
     real(kind=dp)    :: eig(num_wann), alpha(3), conv
 
     allocate (HH(num_wann, num_wann))

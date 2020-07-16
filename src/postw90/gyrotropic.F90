@@ -72,14 +72,10 @@ contains
       eV_au, bohr, elec_mass_SI, twopi, eps0_SI
     use w90_comms, only: on_root, num_nodes, my_node_id, comms_reduce
     use w90_utility, only: utility_det3
-    use w90_io, only: io_error, stdout, io_file_unit, seedname, &
-      io_stopwatch
-    use w90_postw90_common, only: nrpts, irvec, num_int_kpts_on_node, int_kpts, &
-      weight
-    use w90_parameters, only: timing_level, iprint, num_wann, gyrotropic_kmesh, &
+    use w90_io, only: io_error, stdout, io_file_unit, io_stopwatch
+    use w90_parameters, only: timing_level, gyrotropic_kmesh, &
       cell_volume, transl_inv, gyrotropic_task, &
-      gyrotropic_nfreq, gyrotropic_freq_list, nfermi, &
-      fermi_energy_list, gyrotropic_box, gyrotropic_box_corner, spinors
+      gyrotropic_nfreq, nfermi, gyrotropic_box, gyrotropic_box_corner, spinors
     use w90_get_oper, only: get_HH_R, get_AA_R, get_BB_R, get_CC_R, &
       get_SS_R
 
@@ -96,11 +92,8 @@ contains
     character(len=30) :: units_tmp
     character(len=120) :: comment_tmp
 
-    real(kind=dp)     :: kweight, kpt(3), &
-                         db1, db2, db3, fac, freq
-    integer           :: n, i, j, k, ikpt, if, ierr, loop_x, loop_y, loop_z, &
-                         loop_xyz, ifreq, &
-                         file_unit
+    real(kind=dp)     :: kweight, kpt(3), db1, db2, db3, fac
+    integer           :: loop_x, loop_y, loop_z, loop_xyz
     logical           :: eval_K, eval_C, eval_D, eval_Dw, eval_NOA, eval_spn, eval_DOS
 
     if (nfermi == 0) call io_error( &
@@ -483,10 +476,8 @@ contains
     use w90_postw90_common, only: pw90common_get_occ, &
       pw90common_fourier_R_to_k_vec
     use w90_wan_ham, only: wham_get_eig_deleig, wham_get_D_h
-
-    use w90_get_oper, only: HH_R, AA_R
+    use w90_get_oper, only: AA_R
     use w90_spin, only: spin_get_S
-    use w90_io, only: stdout
 
     ! Arguments
     !
@@ -510,7 +501,7 @@ contains
 
     real(kind=dp), allocatable :: curv_w_nk(:, :, :)
 
-    integer          :: i, j, n, n1, m1, m, ifermi
+    integer          :: i, j, n, n1, ifermi
     real(kind=dp)    :: delta, occ(num_wann), &
                         eig(num_wann), del_eig(num_wann, 3), &
                         S(num_wann, 3), eta_smr, arg, &
@@ -702,7 +693,6 @@ contains
       fermi_energy_list, nfermi, gyrotropic_eigval_max, &
       gyrotropic_num_bands, gyrotropic_band_list, iprint
 
-    use w90_comms, only: on_root
     use w90_io, only: stdout, io_time, io_error
 
     use w90_postw90_common, only: pw90common_fourier_R_to_k_vec
@@ -727,11 +717,9 @@ contains
     complex(kind=dp)              :: multW1(gyrotropic_nfreq)
     real(kind=dp) :: multWe(gyrotropic_nfreq), multWm(gyrotropic_nfreq)
 
-    integer ::  num_occ, num_unocc, occ_list(num_wann), unocc_list(num_wann)
+    integer :: num_occ, num_unocc, occ_list(num_wann), unocc_list(num_wann)
 
-    real(kind=dp)    ::  wmn
-
-    integer          :: i, j, n, l, n1, l1, a, b, c, ab, ifermi
+    integer          :: j, n, l, n1, l1, a, b, c, ab, ifermi
     real(kind=dp)    :: wln
 
     if (present(gyro_NOA_spn)) then
@@ -898,8 +886,7 @@ contains
   end subroutine gyrotropic_get_NOA_Bnl_spin
 
   subroutine gyrotropic_outprint_tensor(f_out_name, arrEf, arrEF1D, arrEfW, units, comment, symmetrize)
-    use w90_parameters, only: gyrotropic_nfreq, gyrotropic_freq_list, &
-      nfermi, fermi_energy_list
+    use w90_parameters, only: gyrotropic_nfreq, gyrotropic_freq_list
     use w90_io, only: io_file_unit, seedname, stdout
 
     character(len=30), intent(in) :: f_out_name

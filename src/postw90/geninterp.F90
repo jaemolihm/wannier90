@@ -70,7 +70,7 @@ contains
     !! But at least if works independently of the number of processors.
     !! I think that a way to write in parallel to the output would help a lot,
     !! so that we don't have to send all eigenvalues to the root node.
-    integer            :: kpt_unit, outdat_unit, num_kpts, ierr, i, j, k, enidx
+    integer            :: kpt_unit, outdat_unit, num_kpts, ierr, i, j, enidx
     character(len=500) :: commentline
     character(len=50)  :: cdum
     integer, dimension(:), allocatable              :: kpointidx, localkpointidx

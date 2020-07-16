@@ -88,8 +88,7 @@ contains
     use w90_comms, only: on_root, num_nodes, my_node_id, comms_reduce
     use w90_io, only: io_error, stdout, io_file_unit, seedname, &
       io_stopwatch
-    use w90_postw90_common, only: nrpts, irvec, num_int_kpts_on_node, int_kpts, &
-      weight
+    use w90_postw90_common, only: num_int_kpts_on_node, int_kpts, weight
     use w90_parameters, only: timing_level, iprint, num_wann, berry_kmesh, &
       berry_curv_adpt_kmesh, &
       berry_curv_adpt_kmesh_thresh, &
@@ -147,9 +146,9 @@ contains
     ! for fermi energy scan, adaptive kmesh
     real(kind=dp), allocatable    :: shc_k_fermi_dummy(:)
 
-    real(kind=dp)     :: kweight, kweight_adpt, kpt(3), kpt_ad(3), &
-                         db1, db2, db3, fac, freq, rdum, vdum(3)
-    integer           :: n, i, j, k, jk, ikpt, if, ispn, ierr, loop_x, loop_y, loop_z, &
+    real(kind=dp)     :: kweight, kweight_adpt, kpt(3), db1, db2, db3, &
+                         fac, rdum, vdum(3)
+    integer           :: n, i, j, k, jk, ikpt, ifermi, ierr, loop_x, loop_y, loop_z, &
                          loop_xyz, loop_adpt, adpt_counter_list(nfermi), ifreq, &
                          file_unit
     character(len=120) :: file_name
@@ -373,17 +372,17 @@ contains
         if (eval_ahc) then
           call berry_get_imf_klist(kpt, imf_k_list)
           ladpt = .false.
-          do if = 1, nfermi
-            vdum(1) = sum(imf_k_list(:, 1, if))
-            vdum(2) = sum(imf_k_list(:, 2, if))
-            vdum(3) = sum(imf_k_list(:, 3, if))
+          do ifermi = 1, nfermi
+            vdum(1) = sum(imf_k_list(:, 1, ifermi))
+            vdum(2) = sum(imf_k_list(:, 2, ifermi))
+            vdum(3) = sum(imf_k_list(:, 3, ifermi))
             if (berry_curv_unit == 'bohr2') vdum = vdum/bohr**2
             rdum = sqrt(dot_product(vdum, vdum))
             if (rdum > berry_curv_adpt_kmesh_thresh) then
-              adpt_counter_list(if) = adpt_counter_list(if) + 1
-              ladpt(if) = .true.
+              adpt_counter_list(ifermi) = adpt_counter_list(ifermi) + 1
+              ladpt(ifermi) = .true.
             else
-              imf_list(:, :, if) = imf_list(:, :, if) + imf_k_list(:, :, if)*kweight
+              imf_list(:, :, ifermi) = imf_list(:, :, ifermi) + imf_k_list(:, :, ifermi)*kweight
             endif
           enddo
           if (any(ladpt)) then
@@ -392,10 +391,10 @@ contains
               ! frequencies, hence dummy. Only if-th element is used
               call berry_get_imf_klist(kpt(:) + adkpt(:, loop_adpt), &
                                        imf_k_list_dummy, ladpt=ladpt)
-              do if = 1, nfermi
-                if (ladpt(if)) then
-                  imf_list(:, :, if) = imf_list(:, :, if) &
-                                       + imf_k_list_dummy(:, :, if)*kweight_adpt
+              do ifermi = 1, nfermi
+                if (ladpt(ifermi)) then
+                  imf_list(:, :, ifermi) = imf_list(:, :, ifermi) &
+                                           + imf_k_list_dummy(:, :, ifermi)*kweight_adpt
                 endif
               enddo
             end do
@@ -454,8 +453,8 @@ contains
             !if adpt_kmesh==1, no need to calculate on the same kpt again.
             !This happens if adpt_kmesh==1 while adpt_kmesh_thresh is low.
             if (berry_curv_adpt_kmesh > 1) then
-              do if = 1, nfermi
-                rdum = abs(shc_k_fermi(if))
+              do ifermi = 1, nfermi
+                rdum = abs(shc_k_fermi(ifermi))
                 if (berry_curv_unit == 'bohr2') rdum = rdum/bohr**2
                 if (rdum > berry_curv_adpt_kmesh_thresh) then
                   adpt_counter_list(1) = adpt_counter_list(1) + 1
@@ -505,17 +504,17 @@ contains
         if (eval_ahc) then
           call berry_get_imf_klist(kpt, imf_k_list)
           ladpt = .false.
-          do if = 1, nfermi
-            vdum(1) = sum(imf_k_list(:, 1, if))
-            vdum(2) = sum(imf_k_list(:, 2, if))
-            vdum(3) = sum(imf_k_list(:, 3, if))
+          do ifermi = 1, nfermi
+            vdum(1) = sum(imf_k_list(:, 1, ifermi))
+            vdum(2) = sum(imf_k_list(:, 2, ifermi))
+            vdum(3) = sum(imf_k_list(:, 3, ifermi))
             if (berry_curv_unit == 'bohr2') vdum = vdum/bohr**2
             rdum = sqrt(dot_product(vdum, vdum))
             if (rdum > berry_curv_adpt_kmesh_thresh) then
-              adpt_counter_list(if) = adpt_counter_list(if) + 1
-              ladpt(if) = .true.
+              adpt_counter_list(ifermi) = adpt_counter_list(ifermi) + 1
+              ladpt(ifermi) = .true.
             else
-              imf_list(:, :, if) = imf_list(:, :, if) + imf_k_list(:, :, if)*kweight
+              imf_list(:, :, ifermi) = imf_list(:, :, ifermi) + imf_k_list(:, :, ifermi)*kweight
             endif
           enddo
           if (any(ladpt)) then
@@ -524,10 +523,10 @@ contains
               ! frequencies, hence dummy. Only if-th element is used
               call berry_get_imf_klist(kpt(:) + adkpt(:, loop_adpt), &
                                        imf_k_list_dummy, ladpt=ladpt)
-              do if = 1, nfermi
-                if (ladpt(if)) then
-                  imf_list(:, :, if) = imf_list(:, :, if) &
-                                       + imf_k_list_dummy(:, :, if)*kweight_adpt
+              do ifermi = 1, nfermi
+                if (ladpt(ifermi)) then
+                  imf_list(:, :, ifermi) = imf_list(:, :, ifermi) &
+                                           + imf_k_list_dummy(:, :, ifermi)*kweight_adpt
                 endif
               enddo
             end do
@@ -586,8 +585,8 @@ contains
             !if adpt_kmesh==1, no need to calculate on the same kpt again.
             !This happens if adpt_kmesh==1 while adpt_kmesh_thresh is low.
             if (berry_curv_adpt_kmesh > 1) then
-              do if = 1, nfermi
-                rdum = abs(shc_k_fermi(if))
+              do ifermi = 1, nfermi
+                rdum = abs(shc_k_fermi(ifermi))
                 if (berry_curv_unit == 'bohr2') rdum = rdum/bohr**2
                 if (rdum > berry_curv_adpt_kmesh_thresh) then
                   adpt_counter_list(1) = adpt_counter_list(1) + 1
@@ -788,24 +787,24 @@ contains
           file_unit = io_file_unit()
           open (file_unit, FILE=file_name, STATUS='UNKNOWN', FORM='FORMATTED')
         endif
-        do if = 1, nfermi
+        do ifermi = 1, nfermi
           if (nfermi > 1) write (file_unit, '(4(F12.6,1x))') &
-            fermi_energy_list(if), sum(ahc_list(:, 1, if)), &
-            sum(ahc_list(:, 2, if)), sum(ahc_list(:, 3, if))
+            fermi_energy_list(ifermi), sum(ahc_list(:, 1, ifermi)), &
+            sum(ahc_list(:, 2, ifermi)), sum(ahc_list(:, 3, ifermi))
           write (stdout, '(/,1x,a18,F10.4)') 'Fermi energy (ev):', &
-            fermi_energy_list(if)
+            fermi_energy_list(ifermi)
           if (nfermi > 1) then
             if (wanint_kpoint_file) then
               write (stdout, '(1x,a30,i5,a,f5.2,a)') &
                 ' Points triggering refinement: ', &
-                adpt_counter_list(if), '(', &
-                100*real(adpt_counter_list(if), dp) &
+                adpt_counter_list(ifermi), '(', &
+                100*real(adpt_counter_list(ifermi), dp) &
                 /sum(num_int_kpts_on_node), '%)'
             else
               write (stdout, '(1x,a30,i5,a,f5.2,a)') &
                 ' Points triggering refinement: ', &
-                adpt_counter_list(if), '(', &
-                100*real(adpt_counter_list(if), dp) &
+                adpt_counter_list(ifermi), '(', &
+                100*real(adpt_counter_list(ifermi), dp) &
                 /product(berry_kmesh), '%)'
             endif
           endif
@@ -815,20 +814,20 @@ contains
             write (stdout, '(1x,a)') &
               '=========='
             write (stdout, '(1x,a9,2x,3(f10.4,1x))') 'J0 term :', &
-              ahc_list(1, 1, if), ahc_list(1, 2, if), ahc_list(1, 3, if)
+              ahc_list(1, 1, ifermi), ahc_list(1, 2, ifermi), ahc_list(1, 3, ifermi)
             write (stdout, '(1x,a9,2x,3(f10.4,1x))') 'J1 term :', &
-              ahc_list(2, 1, if), ahc_list(2, 2, if), ahc_list(2, 3, if)
+              ahc_list(2, 1, ifermi), ahc_list(2, 2, ifermi), ahc_list(2, 3, ifermi)
             write (stdout, '(1x,a9,2x,3(f10.4,1x))') 'J2 term :', &
-              ahc_list(3, 1, if), ahc_list(3, 2, if), ahc_list(3, 3, if)
+              ahc_list(3, 1, ifermi), ahc_list(3, 2, ifermi), ahc_list(3, 3, ifermi)
             write (stdout, '(1x,a)') &
               '-------------------------------------------'
             write (stdout, '(1x,a9,2x,3(f10.4,1x),/)') 'Total   :', &
-              sum(ahc_list(:, 1, if)), sum(ahc_list(:, 2, if)), &
-              sum(ahc_list(:, 3, if))
+              sum(ahc_list(:, 1, ifermi)), sum(ahc_list(:, 2, ifermi)), &
+              sum(ahc_list(:, 3, ifermi))
           else
             write (stdout, '(1x,a10,1x,3(f10.4,1x),/)') '==========', &
-              sum(ahc_list(:, 1, if)), sum(ahc_list(:, 2, if)), &
-              sum(ahc_list(:, 3, if))
+              sum(ahc_list(:, 1, ifermi)), sum(ahc_list(:, 2, ifermi)), &
+              sum(ahc_list(:, 3, ifermi))
           endif
         enddo
         if (nfermi > 1) close (file_unit)
@@ -875,39 +874,39 @@ contains
           file_unit = io_file_unit()
           open (file_unit, FILE=file_name, STATUS='UNKNOWN', FORM='FORMATTED')
         endif
-        do if = 1, nfermi
-          LCtil_list(:, :, if) = (img_list(:, :, if) &
-                                  - fermi_energy_list(if)*imf_list2(:, :, if))*fac
-          ICtil_list(:, :, if) = (imh_list(:, :, if) &
-                                  - fermi_energy_list(if)*imf_list2(:, :, if))*fac
-          Morb_list(:, :, if) = LCtil_list(:, :, if) + ICtil_list(:, :, if)
+        do ifermi = 1, nfermi
+          LCtil_list(:, :, ifermi) = (img_list(:, :, ifermi) &
+                                      - fermi_energy_list(ifermi)*imf_list2(:, :, ifermi))*fac
+          ICtil_list(:, :, ifermi) = (imh_list(:, :, ifermi) &
+                                      - fermi_energy_list(ifermi)*imf_list2(:, :, ifermi))*fac
+          Morb_list(:, :, ifermi) = LCtil_list(:, :, ifermi) + ICtil_list(:, :, ifermi)
           if (nfermi > 1) write (file_unit, '(4(F12.6,1x))') &
-            fermi_energy_list(if), sum(Morb_list(1:3, 1, if)), &
-            sum(Morb_list(1:3, 2, if)), sum(Morb_list(1:3, 3, if))
+            fermi_energy_list(ifermi), sum(Morb_list(1:3, 1, ifermi)), &
+            sum(Morb_list(1:3, 2, ifermi)), sum(Morb_list(1:3, 3, ifermi))
           write (stdout, '(/,/,1x,a,F12.6)') 'Fermi energy (ev) =', &
-            fermi_energy_list(if)
+            fermi_energy_list(ifermi)
           write (stdout, '(/,/,1x,a)') &
             'M_orb (bohr magn/cell)        x          y          z'
           if (iprint > 1) then
             write (stdout, '(1x,a)') &
               '======================'
             write (stdout, '(1x,a22,2x,3(f10.4,1x))') 'Local circulation :', &
-              sum(LCtil_list(1:3, 1, if)), sum(LCtil_list(1:3, 2, if)), &
-              sum(LCtil_list(1:3, 3, if))
+              sum(LCtil_list(1:3, 1, ifermi)), sum(LCtil_list(1:3, 2, ifermi)), &
+              sum(LCtil_list(1:3, 3, ifermi))
             write (stdout, '(1x,a22,2x,3(f10.4,1x))') &
               'Itinerant circulation:', &
-              sum(ICtil_list(1:3, 1, if)), sum(ICtil_list(1:3, 2, if)), &
-              sum(ICtil_list(1:3, 3, if))
+              sum(ICtil_list(1:3, 1, ifermi)), sum(ICtil_list(1:3, 2, ifermi)), &
+              sum(ICtil_list(1:3, 3, ifermi))
             write (stdout, '(1x,a)') &
               '--------------------------------------------------------'
             write (stdout, '(1x,a22,2x,3(f10.4,1x),/)') 'Total   :', &
-              sum(Morb_list(1:3, 1, if)), sum(Morb_list(1:3, 2, if)), &
-              sum(Morb_list(1:3, 3, if))
+              sum(Morb_list(1:3, 1, ifermi)), sum(Morb_list(1:3, 2, ifermi)), &
+              sum(Morb_list(1:3, 3, ifermi))
           else
             write (stdout, '(1x,a22,2x,3(f10.4,1x),/)') &
               '======================', &
-              sum(Morb_list(1:3, 1, if)), sum(Morb_list(1:3, 2, if)), &
-              sum(Morb_list(1:3, 3, if))
+              sum(Morb_list(1:3, 1, ifermi)), sum(Morb_list(1:3, 2, ifermi)), &
+              sum(Morb_list(1:3, 3, ifermi))
           endif
         enddo
         if (nfermi > 1) close (file_unit)
@@ -1565,7 +1564,7 @@ contains
     !
     use w90_constants, only: dp, cmplx_0, cmplx_i
     use w90_utility, only: utility_re_tr, utility_im_tr, utility_w0gauss, utility_w0gauss_vec
-    use w90_parameters, only: num_wann, nfermi, kubo_nfreq, kubo_freq_list, fermi_energy_list, &
+    use w90_parameters, only: num_wann, kubo_nfreq, kubo_freq_list, fermi_energy_list, &
       kubo_smr_index, berry_kmesh, kubo_adpt_smr_fac, &
       kubo_adpt_smr_max, kubo_adpt_smr, kubo_eigval_max, &
       kubo_smr_fixed_en_width, sc_phase_conv, sc_w_thr
@@ -1594,10 +1593,10 @@ contains
     real(kind=dp), allocatable    :: occ(:)
 
     complex(kind=dp)              :: sum_AD(3, 3), sum_HD(3, 3), r_mn(3), gen_r_nm(3)
-    integer                       :: i, if, a, b, c, bc, n, m, r, ifreq, istart, iend
+    integer                       :: a, b, c, bc, n, m, istart, iend
     real(kind=dp)                 :: I_nm(3, 6), &
                                      omega(kubo_nfreq), delta(kubo_nfreq), joint_level_spacing, &
-                                     eta_smr, Delta_k, arg, vdum(3), occ_fac, wstep, wmin, wmax
+                                     eta_smr, Delta_k, vdum(3), occ_fac, wstep, wmin, wmax
 
     allocate (UU(num_wann, num_wann))
     allocate (AA(num_wann, num_wann, 3))

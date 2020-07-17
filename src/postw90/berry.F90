@@ -2086,6 +2086,7 @@ contains
           end if
         end do
       end if
+      flush(stdout)
     end if ! on_root
 
   end subroutine berry_print_progress

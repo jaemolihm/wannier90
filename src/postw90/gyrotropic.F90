@@ -725,8 +725,8 @@ contains
     if (present(gyro_NOA_spn)) then
       allocate (SS(num_wann, num_wann, 3))
       allocate (S_h(num_wann, num_wann, 3))
+      call pw90common_fourier_R_to_k_vec(kpt, SS_R, OO_true=SS)
       do j = 1, 3 ! spin direction
-        call pw90common_fourier_R_to_k_vec(kpt, SS_R, OO_true=SS)
         S_h(:, :, j) = utility_rotate(SS(:, :, j), UU, num_wann)
       enddo
     endif

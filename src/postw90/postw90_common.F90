@@ -706,9 +706,9 @@ contains
     !                                                       !
     !=======================================================!
 
-    use w90_constants, only: dp, cmplx_0, cmplx_i, twopi
+    use w90_constants, only: dp, cmplx_0, cmplx_i, twopi, cmplx_1
     use w90_io, only: io_stopwatch
-    use w90_parameters, only: timing_level
+    use w90_parameters, only: timing_level, num_wann
 
     implicit none
 
@@ -723,7 +723,8 @@ contains
 
     integer          :: ir
     real(kind=dp)    :: rdotk
-    complex(kind=dp) :: phase_fac
+    complex(kind=dp) :: phase_fac(nrpts_pw90)
+    complex(kind=dp) :: crvec_phase_fac(nrpts_pw90)
 
     if (timing_level > 2 .and. on_root) call io_stopwatch('fourier: R_to_k_new', 1)
 
@@ -731,20 +732,62 @@ contains
     if (present(OO_dx)) OO_dx = cmplx_0
     if (present(OO_dy)) OO_dy = cmplx_0
     if (present(OO_dz)) OO_dz = cmplx_0
+
+    if (timing_level > 3 .and. on_root) call io_stopwatch('fourier: R_to_k_new_phase', 1)
     do ir = 1, nrpts_pw90
       rdotk = twopi*dot_product(kpt(:), real(irvec_pw90(:, ir), dp))
-      phase_fac = cmplx(cos(rdotk), sin(rdotk), dp)
-      if (present(OO)) OO(:, :) = OO(:, :) + phase_fac*OO_R(:, :, ir)
-      if (present(OO_dx)) then
-        OO_dx(:, :) = OO_dx(:, :) + cmplx_i*crvec_pw90(1, ir)*phase_fac*OO_R(:, :, ir)
-      endif
-      if (present(OO_dy)) then
-        OO_dy(:, :) = OO_dy(:, :) + cmplx_i*crvec_pw90(2, ir)*phase_fac*OO_R(:, :, ir)
-      endif
-      if (present(OO_dz)) then
-        OO_dz(:, :) = OO_dz(:, :) + cmplx_i*crvec_pw90(3, ir)*phase_fac*OO_R(:, :, ir)
-      endif
+      phase_fac(ir) = cmplx(cos(rdotk), sin(rdotk), dp)
     enddo
+    if (timing_level > 3 .and. on_root) call io_stopwatch('fourier: R_to_k_new_phase', 2)
+
+    if (timing_level > 3 .and. on_root) call io_stopwatch('fourier: R_to_k_new_mul', 1)
+
+    if (present(OO)) then
+      call zgemv('n', num_wann*num_wann, nrpts_pw90, &
+                 cmplx_1, OO_R, num_wann*num_wann, phase_fac, 1, &
+                 cmplx_0, OO, 1)
+    endif
+
+    if (present(OO_dx)) then
+      do ir = 1, nrpts_pw90
+        crvec_phase_fac(ir) = cmplx_i*crvec_pw90(1, ir)*phase_fac(ir)
+      enddo
+      call zgemv('n', num_wann*num_wann, nrpts_pw90, &
+                 cmplx_1, OO_R, num_wann*num_wann, crvec_phase_fac, 1, &
+                 cmplx_0, OO_dx, 1)
+    endif
+
+    if (present(OO_dy)) then
+      do ir = 1, nrpts_pw90
+        crvec_phase_fac(ir) = cmplx_i*crvec_pw90(2, ir)*phase_fac(ir)
+      enddo
+      call zgemv('n', num_wann*num_wann, nrpts_pw90, &
+                 cmplx_1, OO_R, num_wann*num_wann, crvec_phase_fac, 1, &
+                 cmplx_0, OO_dy, 1)
+    endif
+
+    if (present(OO_dz)) then
+      do ir = 1, nrpts_pw90
+        crvec_phase_fac(ir) = cmplx_i*crvec_pw90(3, ir)*phase_fac(ir)
+      enddo
+      call zgemv('n', num_wann*num_wann, nrpts_pw90, &
+                 cmplx_1, OO_R, num_wann*num_wann, crvec_phase_fac, 1, &
+                 cmplx_0, OO_dz, 1)
+    endif
+
+    ! do ir = 1, nrpts_pw90
+    !   if (present(OO)) OO(:, :) = OO(:, :) + phase_fac(ir)*OO_R(:, :, ir)
+    !   if (present(OO_dx)) then
+    !     OO_dx(:, :) = OO_dx(:, :) + cmplx_i*crvec_pw90(1, ir)*phase_fac(ir)*OO_R(:, :, ir)
+    !   endif
+    !   if (present(OO_dy)) then
+    !     OO_dy(:, :) = OO_dy(:, :) + cmplx_i*crvec_pw90(2, ir)*phase_fac(ir)*OO_R(:, :, ir)
+    !   endif
+    !   if (present(OO_dz)) then
+    !     OO_dz(:, :) = OO_dz(:, :) + cmplx_i*crvec_pw90(3, ir)*phase_fac(ir)*OO_R(:, :, ir)
+    !   endif
+    ! enddo
+    if (timing_level > 3 .and. on_root) call io_stopwatch('fourier: R_to_k_new_mul', 2)
 
     if (timing_level > 2 .and. on_root) call io_stopwatch('fourier: R_to_k_new', 2)
 
@@ -915,9 +958,9 @@ contains
     !                                                                    !
     !====================================================================!
 
-    use w90_constants, only: dp, cmplx_0, cmplx_i, twopi
+    use w90_constants, only: dp, cmplx_0, cmplx_i, twopi, cmplx_1
     use w90_io, only: io_stopwatch
-    use w90_parameters, only: timing_level
+    use w90_parameters, only: timing_level, num_wann
 
     implicit none
 
@@ -928,39 +971,84 @@ contains
     complex(kind=dp), optional, dimension(:, :, :), intent(out) :: OO_true
     complex(kind=dp), optional, dimension(:, :, :), intent(out) :: OO_pseudo
 
-    integer          :: ir
+    integer          :: ir, a
     real(kind=dp)    :: rdotk
-    complex(kind=dp) :: phase_fac
+    complex(kind=dp) :: phase_fac(nrpts_pw90)
+    complex(kind=dp) :: crvec_phase_fac(nrpts_pw90, 3)
 
     if (timing_level > 2 .and. on_root) call io_stopwatch('fourier: R_to_k_vec', 1)
 
     if (present(OO_true)) OO_true = cmplx_0
     if (present(OO_pseudo)) OO_pseudo = cmplx_0
 
+    if (timing_level > 3 .and. on_root) call io_stopwatch('fourier: R_to_k_vec_phase', 1)
+    do ir = 1, nrpts_pw90
+      rdotk = twopi*dot_product(kpt(:), real(irvec_pw90(:, ir), dp))
+      phase_fac(ir) = cmplx(cos(rdotk), sin(rdotk), dp)
+    enddo
+    if (timing_level > 3 .and. on_root) call io_stopwatch('fourier: R_to_k_vec_phase', 2)
+
+    if (timing_level > 3 .and. on_root) call io_stopwatch('fourier: R_to_k_vec_mul', 1)
+
+    if (present(OO_true)) then
+      do a = 1, 3
+        call zgemv('n', num_wann*num_wann, nrpts_pw90, &
+                   cmplx_1, OO_R(:, :, :, a), num_wann*num_wann, phase_fac, 1, &
+                   cmplx_0, OO_true(:, :, a), 1)
+      enddo
+    endif
+
+    if (present(OO_pseudo)) then
+      do ir = 1, nrpts_pw90
+        do a = 1, 3
+          crvec_phase_fac(ir, a) = cmplx_i*crvec_pw90(a, ir)*phase_fac(ir)
+        enddo
+      enddo
+
+      call zgemv('n', num_wann*num_wann, nrpts_pw90, &
+                 cmplx_1, OO_R(:, :, :, 3), num_wann*num_wann, crvec_phase_fac(:, 2), 1, &
+                 cmplx_1, OO_pseudo(:, :, 1), 1)
+      call zgemv('n', num_wann*num_wann, nrpts_pw90, &
+                 -cmplx_1, OO_R(:, :, :, 2), num_wann*num_wann, crvec_phase_fac(:, 3), 1, &
+                 cmplx_1, OO_pseudo(:, :, 1), 1)
+
+      call zgemv('n', num_wann*num_wann, nrpts_pw90, &
+                 cmplx_1, OO_R(:, :, :, 1), num_wann*num_wann, crvec_phase_fac(:, 3), 1, &
+                 cmplx_1, OO_pseudo(:, :, 2), 1)
+      call zgemv('n', num_wann*num_wann, nrpts_pw90, &
+                 -cmplx_1, OO_R(:, :, :, 3), num_wann*num_wann, crvec_phase_fac(:, 1), 1, &
+                 cmplx_1, OO_pseudo(:, :, 2), 1)
+
+      call zgemv('n', num_wann*num_wann, nrpts_pw90, &
+                 cmplx_1, OO_R(:, :, :, 2), num_wann*num_wann, crvec_phase_fac(:, 1), 1, &
+                 cmplx_1, OO_pseudo(:, :, 3), 1)
+      call zgemv('n', num_wann*num_wann, nrpts_pw90, &
+                 -cmplx_1, OO_R(:, :, :, 1), num_wann*num_wann, crvec_phase_fac(:, 2), 1, &
+                 cmplx_1, OO_pseudo(:, :, 3), 1)
+    endif
+
     do ir = 1, nrpts_pw90
 
-      rdotk = twopi*dot_product(kpt(:), real(irvec_pw90(:, ir), dp))
-      phase_fac = cmplx(cos(rdotk), sin(rdotk), dp)
+      ! if (present(OO_true)) then
+      !   OO_true(:, :, 1) = OO_true(:, :, 1) + phase_fac(ir)*OO_R(:, :, ir, 1)
+      !   OO_true(:, :, 2) = OO_true(:, :, 2) + phase_fac(ir)*OO_R(:, :, ir, 2)
+      !   OO_true(:, :, 3) = OO_true(:, :, 3) + phase_fac(ir)*OO_R(:, :, ir, 3)
+      ! endif
 
-      if (present(OO_true)) then
-        OO_true(:, :, 1) = OO_true(:, :, 1) + phase_fac*OO_R(:, :, ir, 1)
-        OO_true(:, :, 2) = OO_true(:, :, 2) + phase_fac*OO_R(:, :, ir, 2)
-        OO_true(:, :, 3) = OO_true(:, :, 3) + phase_fac*OO_R(:, :, ir, 3)
-      endif
-
-      if (present(OO_pseudo)) then
-        OO_pseudo(:, :, 1) = OO_pseudo(:, :, 1) &
-                             + cmplx_i*crvec_pw90(2, ir)*phase_fac*OO_R(:, :, ir, 3) &
-                             - cmplx_i*crvec_pw90(3, ir)*phase_fac*OO_R(:, :, ir, 2)
-        OO_pseudo(:, :, 2) = OO_pseudo(:, :, 2) &
-                             + cmplx_i*crvec_pw90(3, ir)*phase_fac*OO_R(:, :, ir, 1) &
-                             - cmplx_i*crvec_pw90(1, ir)*phase_fac*OO_R(:, :, ir, 3)
-        OO_pseudo(:, :, 3) = OO_pseudo(:, :, 3) &
-                             + cmplx_i*crvec_pw90(1, ir)*phase_fac*OO_R(:, :, ir, 2) &
-                             - cmplx_i*crvec_pw90(2, ir)*phase_fac*OO_R(:, :, ir, 1)
-      endif
+      ! if (present(OO_pseudo)) then
+      !   OO_pseudo(:, :, 1) = OO_pseudo(:, :, 1) &
+      !                        + cmplx_i*crvec_pw90(2, ir)*phase_fac(ir)*OO_R(:, :, ir, 3) &
+      !                        - cmplx_i*crvec_pw90(3, ir)*phase_fac(ir)*OO_R(:, :, ir, 2)
+      !   OO_pseudo(:, :, 2) = OO_pseudo(:, :, 2) &
+      !                        + cmplx_i*crvec_pw90(3, ir)*phase_fac(ir)*OO_R(:, :, ir, 1) &
+      !                        - cmplx_i*crvec_pw90(1, ir)*phase_fac(ir)*OO_R(:, :, ir, 3)
+      !   OO_pseudo(:, :, 3) = OO_pseudo(:, :, 3) &
+      !                        + cmplx_i*crvec_pw90(1, ir)*phase_fac(ir)*OO_R(:, :, ir, 2) &
+      !                        - cmplx_i*crvec_pw90(2, ir)*phase_fac(ir)*OO_R(:, :, ir, 1)
+      ! endif
 
     enddo
+    if (timing_level > 3 .and. on_root) call io_stopwatch('fourier: R_to_k_vec_mul', 2)
 
     if (timing_level > 2 .and. on_root) call io_stopwatch('fourier: R_to_k_vec', 2)
 

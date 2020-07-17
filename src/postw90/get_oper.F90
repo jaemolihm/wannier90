@@ -1337,9 +1337,9 @@ contains
       allocate (SR_q(num_wann, num_wann, num_kpts, 3, 3))
       allocate (SHR_q(num_wann, num_wann, num_kpts, 3, 3))
       allocate (SH_q(num_wann, num_wann, num_kpts, 3))
-      allocate (SR_R_temp(num_wann, num_wann, nrpts, 3, 3))
-      allocate (SHR_R_temp(num_wann, num_wann, nrpts, 3, 3))
-      allocate (SH_R_temp(num_wann, num_wann, nrpts, 3))
+      allocate (SR_R_temp(num_wann, num_wann, nrpts_pw90, 3, 3))
+      allocate (SHR_R_temp(num_wann, num_wann, nrpts_pw90, 3, 3))
+      allocate (SH_R_temp(num_wann, num_wann, nrpts_pw90, 3))
       allocate (S_o(num_bands, num_bands))
 
       mmn_in = io_file_unit()

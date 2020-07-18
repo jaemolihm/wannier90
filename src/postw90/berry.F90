@@ -68,6 +68,8 @@ module w90_berry
   complex(kind=dp), allocatable :: rmn_save_jml_A(:, :, :, :)
   complex(kind=dp), allocatable :: rmn_save_jml_D(:, :, :, :)
   complex(kind=dp), allocatable :: rmn_save_pwf_jml(:, :, :, :)
+  complex(kind=dp), allocatable :: gen_r_nm_save(:, :, :, :, :, :)
+  !! gen_r_nm_save(a, b, n, m, ik) = r_{nm;ik}^{a;b}
 
 contains
 
@@ -251,8 +253,10 @@ contains
       sc_list = 0.0_dp
       allocate(rmn_save_jml_A(3, num_wann, num_wann, nk))
       allocate(rmn_save_jml_D(3, num_wann, num_wann, nk))
+      allocate(gen_r_nm_save(8, 3, 3, num_wann, num_wann, nk))
       rmn_save_jml_A = cmplx_0
       rmn_save_jml_D = cmplx_0
+      gen_r_nm_save = cmplx_0
       if (use_pwf_jml) then
         allocate(rmn_save_pwf_jml(3, num_wann, num_wann, nk))
         rmn_save_pwf_jml = cmplx_0
@@ -689,6 +693,7 @@ contains
       call comms_reduce(sc_list(1, 1, 1), 3*6*kubo_nfreq, 'SUM')
       call comms_reduce(rmn_save_jml_A(1, 1, 1, 1), 3*num_wann*num_wann*nk, 'SUM')
       call comms_reduce(rmn_save_jml_D(1, 1, 1, 1), 3*num_wann*num_wann*nk, 'SUM')
+      call comms_reduce(gen_r_nm_save(1, 1, 1, 1, 1, 1), 8*3*3*num_wann*num_wann*nk, 'SUM')
       if (use_pwf_jml) call comms_reduce(rmn_save_pwf_jml(1, 1, 1, 1), 3*num_wann*num_wann*sum(num_int_kpts_on_node), 'SUM')
       if (on_root) then
         inquire(iolength=i) rmn_save_jml_A
@@ -698,6 +703,10 @@ contains
         inquire(iolength=i) rmn_save_jml_D
         open(999, file='rmn_save_jml_D.bin', form='unformatted', access='direct', recl=i)
         write(999, rec=1) rmn_save_jml_D
+        close(999)
+        inquire(iolength=i) gen_r_nm_save
+        open(999, file='gen_r_nm_save.bin', form='unformatted', access='direct', recl=i)
+        write(999, rec=1) gen_r_nm_save
         close(999)
         if (use_pwf_jml) then
           inquire(iolength=i) rmn_save_pwf_jml
@@ -1772,6 +1781,18 @@ contains
           enddo
         enddo
 
+        ! if (n == 9 .and. m == 13) then
+        !   ! 9, 10
+        !   ! 13, 14
+        !   do a = 1, 3
+        !     do c = 1, 3
+        !     sum_HD(c, a) = sum_HD(c, a) &
+        !       - HH_da_bar(9, 14, c) * D_h(14, 13, a) &
+        !       + D_h(9, 10, a) * HH_da_bar(10, 13, c)
+        !     enddo
+        !   enddo
+        ! endif
+
         ! dipole matrix element
         r_mn(:) = AA_bar(m, n, :) + cmplx_i*D_h(m, n, :)
 
@@ -1799,6 +1820,18 @@ contains
             c = beta_S(bc)
             I_nm(a, bc) = aimag(r_mn(b)*gen_r_nm(c) + r_mn(c)*gen_r_nm(b))
           enddo ! bc
+
+          gen_r_nm_save(1, :, a, n, m, ik) = gen_r_nm(:)
+          gen_r_nm_save(2, :, a, n, m, ik) = AA_da_bar(n, m, :, a)
+          gen_r_nm_save(3, :, a, n, m, ik) = (AA_bar(n, n, :) - AA_bar(m, m, :))*D_h(n, m, a) &
+                                           + (AA_bar(n, n, a) - AA_bar(m, m, a))*D_h(n, m, :)
+          gen_r_nm_save(4, :, a, n, m, ik) = - cmplx_i*AA_bar(n, m, :)*(AA_bar(n, n, a) - AA_bar(m, m, a))
+          gen_r_nm_save(5, :, a, n, m, ik) = sum_AD(:, a)
+          gen_r_nm_save(6, :, a, n, m, ik) = cmplx_i*HH_dadb_bar(n, m, :, a)/(eig(m) - eig(n))
+          gen_r_nm_save(7, :, a, n, m, ik) = cmplx_i*sum_HD(:, a)/(eig(m) - eig(n))
+          gen_r_nm_save(8, :, a, n, m, ik) = cmplx_i*(D_h(n, m, :)*(eig_da(n, a) - eig_da(m, a)) + &
+                                                      D_h(n, m, a)*(eig_da(n, :) - eig_da(m, :))) &
+                                           /(eig(m) - eig(n))
         enddo ! a
 
         ! compute delta(E_nm-w)

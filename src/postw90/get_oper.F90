@@ -1693,8 +1693,8 @@ contains
             vel_inv_e_q(ib, jb) = vel_q_cart(ahc_nbndskip+ib, jb, jdir, ik) / (eigval(jb, ik) - eigval(ib, ik))
           enddo
         enddo
-        ! vel_inv_e_q = (0.d0, -1.d0) * vel_inv_e_q
-        ! svel_inv_e_q = (0.d0, -1.d0) * svel_inv_e_q
+        vel_inv_e_q = (0.d0, -1.d0) * vel_inv_e_q
+        svel_inv_e_q = (0.d0, -1.d0) * svel_inv_e_q
 
         ! add svel_inv_e_q.H * qmat * vel_inv_e_q to omega_q_cart_add
 

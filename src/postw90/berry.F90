@@ -1948,6 +1948,7 @@ contains
       pw90common_fourier_R_to_k_vec, pw90common_kmesh_spacing
     use w90_wan_ham, only: wham_get_D_h, wham_get_eig_deleig
     use w90_get_oper, only: AA_R
+    use w90_parameters, only : jml_only_inter_gap, jml_num_elec
     !use w90_comms, only: my_node_id
     !!!
 
@@ -2046,7 +2047,8 @@ contains
     end if
 
     do n = 1, num_wann
-      ! if (n > 8) cycle ! JML. Only for GaAs
+      ! JML DEBUG: only inter-gap contributions: n is occupied, m is unoccpied
+      if (jml_only_inter_gap .and. n > jml_num_elec) cycle
       ! get Omega_{n,alpha beta}^{gamma}
       if (lfreq) then
         omega_list = cmplx_0
@@ -2057,7 +2059,8 @@ contains
         if (m == n) cycle
         if (eig(m) > kubo_eigval_max .or. eig(n) > kubo_eigval_max) cycle
 
-        ! if (m <= 8) cycle ! JML. Only for GaAs
+        ! JML DEBUG: only inter-gap contributions: n is occupied, m is unoccpied
+        if (jml_only_inter_gap .and. m <= jml_num_elec) cycle
 
         rfac = eig(m) - eig(n)
         !this will calculate AHC

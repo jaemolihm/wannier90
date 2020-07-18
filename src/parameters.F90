@@ -227,6 +227,8 @@ module w90_parameters
   character(len=256), public, save :: ahc_dir
   integer, public, save :: ahc_nbnd_full
   integer, public, save :: ahc_nbndskip
+  logical, public, save :: jml_only_inter_gap
+  integer, public, save :: jml_num_elec
   ! END JML
 
   logical, public, save :: gyrotropic
@@ -1352,6 +1354,12 @@ contains
     call param_get_keyword('ahc_nbnd_full', found, i_value=ahc_nbnd_full)
     if (use_pwf_jml .and. (.not. found)) &
       call io_error('Error: ahc_nbnd_full must be specified to use use_pwf_jml')
+    jml_only_inter_gap = .false.
+    call param_get_keyword('jml_only_inter_gap', found, l_value=jml_only_inter_gap)
+    jml_num_elec = .false.
+    call param_get_keyword('jml_num_elec', found, i_value=jml_num_elec)
+    if (jml_num_elec .and. (.not. found)) &
+      call io_error('Error: jml_num_elec must be specified to use jml_num_elec')
     ! END JML
 
     spin_moment = .false.
@@ -6478,6 +6486,8 @@ contains
     call comms_bcast(ahc_dir, 1)
     call comms_bcast(ahc_nbndskip, 1)
     call comms_bcast(ahc_nbnd_full, 1)
+    call comms_bcast(jml_only_inter_gap, 1)
+    call comms_bcast(jml_num_elec, 1)
     ! END JML
 
   end subroutine param_dist

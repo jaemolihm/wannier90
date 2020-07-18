@@ -1661,7 +1661,7 @@ contains
     use w90_parameters, only: num_bands, num_wann, ndimwin, num_kpts, &
         have_disentangled, eigval, ahc_dir, ahc_nbnd_full, ahc_nbndskip, &
         dis_froz_min, dis_froz_max
-    use w90_postw90_common, only: nrpts, v_matrix
+    use w90_postw90_common, only: nrpts, v_matrix, nrpts_pw90
     use w90_utility, only : utility_zgemmm, utility_zgemm_new
 
     implicit none
@@ -1674,6 +1674,8 @@ contains
     !! vel_q at coarse k grid. Computed by ahc.f90.
     complex(kind=dp), allocatable :: omega_q(:, :, :)
     !! omega at coarse k grid, in wannier basis
+    complex(kind=dp), allocatable :: omega_r_pwf_temp(:, :, :)
+    !! omega at real-space R grid, in wannier basis
 
     complex(kind=dp), allocatable :: vel_inv_e_q(:,:), svel_inv_e_q(:,:), &
       omega_q_cart_add(:,:), qmat(:,:)
@@ -1686,12 +1688,14 @@ contains
       return
     endif
 
-    allocate(omega_r_pwf(num_wann, num_wann, nrpts))
+    allocate(omega_r_pwf(num_wann, num_wann, nrpts_pw90))
 
     if (on_root) then
 
       idir = 1
       jdir = 2
+
+      allocate(omega_r_pwf_temp(num_wann, num_wann, nrpts))
 
       allocate (omega_q_cart(num_bands, num_bands, 3, 3, num_kpts))
       allocate (vel_q_cart(ahc_nbnd_full, num_bands, 3, num_kpts))
@@ -1813,17 +1817,14 @@ contains
                             omega_q(:, :, ik))
       enddo
 
-      call fourier_q_to_R(omega_q, omega_r_pwf)
+      call fourier_q_to_R(omega_q, omega_r_pwf_temp)
 
-      deallocate(vel_inv_e_q)
-      deallocate(svel_inv_e_q)
-      deallocate(num_states)
-      deallocate(omega_q)
-      deallocate(omega_q_cart)
+      ! Apply degeneracy factor and reorder according to the wigner-seitz vectors
+      call operator_wigner_setup(omega_r_pwf_temp, omega_r_pwf)
 
     endif ! on_root
 
-    call comms_bcast(omega_r_pwf(1, 1, 1), num_wann*num_wann*nrpts)
+    call comms_bcast(omega_r_pwf(1, 1, 1), num_wann*num_wann*nrpts_pw90)
 
   end subroutine get_omega_r_pwf_jml
 
@@ -1837,7 +1838,7 @@ contains
     use w90_constants, only : bohr_angstrom_internal, eV_au
     use w90_parameters, only: num_bands, num_wann, ndimwin, num_kpts, &
         have_disentangled, eigval, ahc_dir, ahc_nbnd_full, ahc_nbndskip
-    use w90_postw90_common, only: nrpts, v_matrix
+    use w90_postw90_common, only: nrpts, v_matrix, nrpts_pw90
     use w90_utility, only : utility_zgemmm, utility_zgemm_new
 
     implicit none
@@ -1854,6 +1855,10 @@ contains
     !! vel at coarse k grid, in wannier basis
     complex(kind=dp), allocatable :: svel_q_w(:, :, :, :)
     !! svel at coarse k grid, in wannier basis
+    complex(kind=dp), allocatable :: vel_r_pwf_temp(:, :, :, :)
+    !! vel at real space R grid, in wannier basis
+    complex(kind=dp), allocatable :: svel_r_pwf_temp(:, :, :, :)
+    !! svel at real space R grid, in wannier basis
 
     complex(kind=dp), allocatable :: vel_inv_e_q(:,:), svel_inv_e_q(:,:), &
       vel_q_add(:,:), svel_q_add(:,:), qmat(:,:), mat_temp(:,:), mat_temp2(:,:), &
@@ -1869,8 +1874,11 @@ contains
 
     if (on_root) then
 
-      allocate(vel_r_pwf(num_wann, num_wann, nrpts, 3))
-      allocate(svel_r_pwf(num_wann, num_wann, nrpts, 3))
+      allocate(vel_r_pwf(num_wann, num_wann, nrpts_pw90, 3))
+      allocate(svel_r_pwf(num_wann, num_wann, nrpts_pw90, 3))
+
+      allocate(vel_r_pwf_temp(num_wann, num_wann, nrpts, 3))
+      allocate(svel_r_pwf_temp(num_wann, num_wann, nrpts, 3))
 
       allocate(vel_q_cart(ahc_nbnd_full, num_bands, 3, num_kpts))
       allocate(svel_q_cart(ahc_nbnd_full, num_bands, 3, num_kpts))
@@ -2032,18 +2040,16 @@ contains
       ! close(666)
 
       do idir = 1, 3
-        call fourier_q_to_R(vel_q_w(:, :, :, idir), vel_r_pwf(:, :, :, idir))
-        call fourier_q_to_R(svel_q_w(:, :, :, idir), svel_r_pwf(:, :, :, idir))
+        call fourier_q_to_R(vel_q_w(:, :, :, idir), vel_r_pwf_temp(:, :, :, idir))
+        call fourier_q_to_R(svel_q_w(:, :, :, idir), svel_r_pwf_temp(:, :, :, idir))
       enddo
 
-      deallocate(num_states)
-      deallocate(qmat)
-      deallocate(vel_q_cart)
-      deallocate(svel_q_cart)
-      deallocate(vel_q)
-      deallocate(vel_q_w)
-      deallocate(svel_q)
-      deallocate(svel_q_w)
+      ! Apply degeneracy factor and reorder according to the wigner-seitz vectors
+      do idir = 1, 3
+        call operator_wigner_setup(vel_r_pwf_temp(:, :, :, idir), vel_r_pwf(:, :, :, idir))
+        call operator_wigner_setup(svel_r_pwf_temp(:, :, :, idir), svel_r_pwf(:, :, :, idir))
+      enddo
+
     endif
 
     if (.not. on_root) then
@@ -2051,8 +2057,8 @@ contains
       allocate(svel_r_pwf(num_wann, num_wann, nrpts, 3))
     endif
 
-    call comms_bcast(vel_r_pwf(1, 1, 1, 1), 3*num_wann*num_wann*nrpts)
-    call comms_bcast(svel_r_pwf(1, 1, 1, 1), 3*num_wann*num_wann*nrpts)
+    call comms_bcast(vel_r_pwf(1, 1, 1, 1), 3*num_wann*num_wann*nrpts_pw90)
+    call comms_bcast(svel_r_pwf(1, 1, 1, 1), 3*num_wann*num_wann*nrpts_pw90)
 
   end subroutine get_vel_r_pwf_jml
 

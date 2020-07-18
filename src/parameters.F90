@@ -3462,8 +3462,9 @@ contains
     write (stdout, *) '            |                                                   |'
     write (stdout, *) '            |  [ref] "Wannier90 as a community code:            |'
     write (stdout, *) '            |        new features and applications",            |'
-    write (stdout, *) '            |        G. Pizzi et al., arXiv:1907:09788 (2019)   |'
-    write (stdout, *) '            |        https://arxiv.org/abs/1907.09788           |'
+    write (stdout, *) '            |        G. Pizzi et al., J. Phys. Cond. Matt. 32,  |'
+    write (stdout, *) '            |        165902 (2020).                             |'
+    write (stdout, *) '            |        http://doi.org/10.1088/1361-648X/ab51ff    |'
     write (stdout, *) '            |                                                   |'
     write (stdout, *) '            |  in any publications arising from the use of      |'
     write (stdout, *) '            |  this code. For the method please cite            |'
@@ -3479,11 +3480,11 @@ contains
     write (stdout, *) '            |         Phys. Rev. B 65 035109 (2001)             |'
     write (stdout, *) '            |                                                   |'
     write (stdout, *) '            |                                                   |'
-    write (stdout, *) '            | Copyright (c) 1996-2019                           |'
+    write (stdout, *) '            | Copyright (c) 1996-2020                           |'
     write (stdout, *) '            |        The Wannier90 Developer Group and          |'
     write (stdout, *) '            |        individual contributors                    |'
     write (stdout, *) '            |                                                   |'
-    write (stdout, *) '            |      Release: ', adjustl(w90_version), '  27th February 2019      |'
+    write (stdout, *) '            |      Release: ', adjustl(w90_version), '   5th March    2020      |'
     write (stdout, *) '            |                                                   |'
     write (stdout, *) '            | This program is free software; you can            |'
     write (stdout, *) '            | redistribute it and/or modify it under the terms  |'
@@ -6337,6 +6338,7 @@ contains
     call comms_bcast(lfixstep, 1)
     call comms_bcast(lsitesymmetry, 1)
     call comms_bcast(frozen_states, 1)
+    call comms_bcast(symmetrize_eps, 1)
 
     !vv: Constrained centres
     call comms_bcast(slwf_num, 1)
@@ -6403,8 +6405,10 @@ contains
 
     if (nfermi > 0) call comms_bcast(fermi_energy_list(1), nfermi)
     if (kubo_nfreq > 0) call comms_bcast(kubo_freq_list(1), kubo_nfreq)
-    call comms_bcast(gyrotropic_freq_list(1), gyrotropic_nfreq)
-    call comms_bcast(gyrotropic_band_list(1), gyrotropic_num_bands)
+    if (gyrotropic_nfreq > 0) &
+      call comms_bcast(gyrotropic_freq_list(1), gyrotropic_nfreq)
+    if (gyrotropic_num_bands > 0) &
+      call comms_bcast(gyrotropic_band_list(1), gyrotropic_num_bands)
     if (num_dos_project > 0) call comms_bcast(dos_project(1), num_dos_project)
     if (.not. effective_model) then
       if (eig_found) then

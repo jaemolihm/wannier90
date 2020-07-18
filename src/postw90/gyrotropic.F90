@@ -484,7 +484,7 @@ contains
       pw90common_fourier_R_to_k_vec
     use w90_wan_ham, only: wham_get_eig_deleig, wham_get_D_h
 
-    use w90_get_oper, only: HH_R, SS_R, AA_R
+    use w90_get_oper, only: AA_R
     use w90_spin, only: spin_get_S
     use w90_io, only: stdout
 
@@ -705,7 +705,7 @@ contains
     use w90_comms, only: on_root
     use w90_io, only: stdout, io_time, io_error
 
-    use w90_postw90_common, only: pw90common_fourier_R_to_k_new
+    use w90_postw90_common, only: pw90common_fourier_R_to_k_vec
     use w90_get_oper, only: SS_R
     use w90_spin, only: spin_get_S
 
@@ -737,8 +737,8 @@ contains
     if (present(gyro_NOA_spn)) then
       allocate (SS(num_wann, num_wann, 3))
       allocate (S_h(num_wann, num_wann, 3))
+      call pw90common_fourier_R_to_k_vec(kpt, SS_R, OO_true=SS)
       do j = 1, 3 ! spin direction
-        call pw90common_fourier_R_to_k_new(kpt, SS_R(:, :, :, j), OO=SS(:, :, j))
         S_h(:, :, j) = utility_rotate(SS(:, :, j), UU, num_wann)
       enddo
     endif

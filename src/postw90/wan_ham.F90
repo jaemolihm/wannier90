@@ -387,7 +387,7 @@ contains
     !
     use w90_parameters, only: num_wann
     use w90_get_oper, only: HH_R, get_HH_R
-    use w90_postw90_common, only: pw90common_fourier_R_to_k, pw90common_fourier_R_to_k_new
+    use w90_postw90_common, only: pw90common_fourier_R_to_k_new
     use w90_utility, only: utility_diagonalize
 
     real(kind=dp), dimension(3), intent(in)         :: kpt
@@ -409,13 +409,11 @@ contains
     ! Further calls should return very fast.
     call get_HH_R
 
-    ! call pw90common_fourier_R_to_k(kpt, HH_R, HH, 0)
     call pw90common_fourier_R_to_k_new(kpt, HH_R, OO=HH, &
-      OO_dx=delHH(:, :, 1), OO_dy=delHH(:, :, 2), OO_dz=delHH(:, :, 3))
+                                       OO_dx=delHH(:, :, 1), &
+                                       OO_dy=delHH(:, :, 2), &
+                                       OO_dz=delHH(:, :, 3))
     call utility_diagonalize(HH, num_wann, eig, UU)
-    ! call pw90common_fourier_R_to_k(kpt, HH_R, delHH(:, :, 1), 1)
-    ! call pw90common_fourier_R_to_k(kpt, HH_R, delHH(:, :, 2), 2)
-    ! call pw90common_fourier_R_to_k(kpt, HH_R, delHH(:, :, 3), 3)
     call wham_get_deleig_a(del_eig(:, 1), eig, delHH(:, :, 1), UU)
     call wham_get_deleig_a(del_eig(:, 2), eig, delHH(:, :, 2), UU)
     call wham_get_deleig_a(del_eig(:, 3), eig, delHH(:, :, 3), UU)
@@ -430,8 +428,6 @@ contains
     !! derivatives of the eigenvalues dE/dk_a, using wham_get_deleig_a
     !
     use w90_parameters, only: num_wann
-    use w90_get_oper, only: HH_R, get_HH_R
-    use w90_postw90_common, only: pw90common_fourier_R_to_k
     use w90_utility, only: utility_diagonalize
 
     real(kind=dp), dimension(3), intent(in)         :: kpt
@@ -499,24 +495,25 @@ contains
     !========================================================!
 
     use w90_parameters, only: num_wann
-    use w90_get_oper, only: HH_R, get_HH_R, AA_R, get_AA_R
-    use w90_postw90_common, only: pw90common_fourier_R_to_k_new_second_d, &
-      pw90common_fourier_R_to_k_new_second_d_TB_conv
+    use w90_get_oper, only: HH_R, get_HH_R, get_AA_R
+    use w90_postw90_common, only: pw90common_fourier_R_to_k_new_second_d_TB_conv
     use w90_utility, only: utility_diagonalize
 
     real(kind=dp), dimension(3), intent(in)           :: kpt
     real(kind=dp), intent(out)                        :: eig(num_wann)
     complex(kind=dp), dimension(:, :), intent(out)     :: UU
     complex(kind=dp), dimension(:, :), intent(out)     :: HH
-    complex(kind=dp), dimension(:, :, :), intent(out)       :: HH_da
-    complex(kind=dp), dimension(:, :, :, :), intent(out)     :: HH_dadb
+    complex(kind=dp), dimension(:, :, :), intent(out)    :: HH_da
+    complex(kind=dp), dimension(:, :, :, :), intent(out) :: HH_dadb
 
     integer                       :: i
 
     call get_HH_R
+    ! wannier_centres_from_AA_R is set inside get_AA_R, and used in
+    ! pw90common_fourier_R_to_k_new_second_d_TB_conv
     call get_AA_R
 
-    call pw90common_fourier_R_to_k_new_second_d_TB_conv(kpt, HH_R, AA_R, OO=HH, &
+    call pw90common_fourier_R_to_k_new_second_d_TB_conv(kpt, HH_R, OO=HH, &
                                                         OO_da=HH_da(:, :, :), &
                                                         OO_dadb=HH_dadb(:, :, :, :))
     call utility_diagonalize(HH, num_wann, eig, UU)

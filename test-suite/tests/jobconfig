@@ -207,6 +207,12 @@ program = POSTW90_WPOUT_OK
 inputs_args = ('Fe.win', '')
 output = Fe.wpout 
 
+# Test of AHC for bcc iron with adaptive mesh refinement and Fermi scan
+[testpostw90_fe_ahc_adaptandfermi/]
+program = POSTW90_FERMISCAN_OK
+inputs_args = ('Fe.win', '')
+output = Fe-ahc-fermiscan.dat 
+
 # Test of Orbital Magnetisation for bcc iron
 [testpostw90_fe_morb/]
 program = POSTW90_WPOUT_OK
@@ -221,6 +227,12 @@ output = Fe.wpout
 
 # Test of KPATH Berry Curvature plus Orbital Magnetisation for bcc iron
 [testpostw90_fe_kpathmorbcurv/]
+program = POSTW90_MORBDAT_OK
+inputs_args = ('Fe.win', '')
+output = Fe-morb.dat
+
+# Test of KPATH Berry Curvature plus Orbital Magnetisation for bcc iron with use_ws_distance = true
+[testpostw90_fe_kpathmorbcurv_ws/]
 program = POSTW90_MORBDAT_OK
 inputs_args = ('Fe.win', '')
 output = Fe-morb.dat
@@ -267,6 +279,12 @@ output = Fe-kubo_S_zz.dat
 program = POSTW90_WPOUT_OK
 inputs_args = ('Fe.win', '')
 output = Fe.wpout
+
+# Test of spin density of states for bcc iron
+[testpostw90_fe_dos_spin/]
+program = POSTW90_DOS_OK
+inputs_args = ('Fe.win', '')
+output = Fe-dos.dat
 
 # testpostw90_te_gyrotropic
 [testpostw90_te_gyrotropic/]
@@ -334,6 +352,24 @@ program = POSTW90_SC_OK
 inputs_args = ('gaas.win', '')
 output = gaas-sc_xyz.dat
 
+# Test of shift current for GaAs with use_ws_distance = true
+[testpostw90_gaas_sc_xyz_wsdistance/]
+program = POSTW90_SC_OK
+inputs_args = ('gaas.win', '')
+output = gaas-sc_xyz.dat
+
+# Test of shift current for GaAs with sc_phase_conv = 2 and use_ws_distance = false
+[testpostw90_gaas_sc_xyz_scphase2/]
+program = POSTW90_SC_OK
+inputs_args = ('gaas.win', '')
+output = gaas-sc_xyz.dat
+
+# Test of shift current for GaAs with sc_phase_conv = 2 and use_ws_distance = true
+[testpostw90_gaas_sc_xyz_scphase2_ws/]
+program = POSTW90_SC_OK
+inputs_args = ('gaas.win', '')
+output = gaas-sc_xyz.dat
+
 # Test of selective localization and constrained centres
 [testw90_example26]
 program = WANNIER90_SLWFC_WOUT_OK
@@ -369,6 +405,12 @@ output = Pt-shc.dat
 program = POSTW90_SHCKSLICEDAT_OK
 inputs_args = ('Pt.win', '')
 output = Pt-kslice-shc.dat
+
+# Test of symmetry adapted WFs with disentnanglement
+[testw90_disentanglement_sawfs]
+program = WANNIER90_DISENTANGLEMENT_SAWFS
+inputs_args = ('H3S.win', '')
+output = H3S.wout
 
 [categories]
 wannier_only = testw90_*

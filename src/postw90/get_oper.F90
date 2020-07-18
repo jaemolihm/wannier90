@@ -79,6 +79,7 @@ contains
     !
     !======================================================
 
+    use w90_comms, only: on_root, comms_bcast
     use w90_constants, only: dp, cmplx_0
     use w90_io, only: io_error, stdout, io_stopwatch, &
       io_file_unit, seedname
@@ -87,14 +88,15 @@ contains
       timing_level, scissors_shift, &
       num_valence_bands, effective_model, &
       real_lattice
-    use w90_postw90_common, only: nrpts, rpt_origin, v_matrix, ndegen, irvec, crvec
-    use w90_comms, only: on_root, comms_bcast
+    use w90_postw90_common, only: nrpts, rpt_origin, v_matrix, ndegen, irvec, &
+      crvec, nrpts_pw90, irvec_pw90, crvec_pw90
 
     integer                       :: i, j, n, m, ii, ik, winmin_q, file_unit, &
-                                     ir, io, idum, ivdum(3), ivdum_old(3)
+                                     ir, jr, io, idum, ideg, ivdum(3), ivdum_old(3)
     integer, allocatable          :: num_states(:)
     real(kind=dp)                 :: rdum_real, rdum_imag
     complex(kind=dp), allocatable :: HH_q(:, :, :)
+    complex(kind=dp), allocatable :: HH_R_temp(:, :, :)
     logical                       :: new_ir
 
     !ivo
@@ -104,17 +106,18 @@ contains
 
     if (timing_level > 1 .and. on_root) call io_stopwatch('get_oper: get_HH_R', 1)
 
-    if (.not. allocated(HH_R)) then
-      allocate (HH_R(num_wann, num_wann, nrpts))
-    else
+    if (allocated(HH_R)) then
       if (timing_level > 1 .and. on_root) call io_stopwatch('get_oper: get_HH_R', 2)
       return
     end if
 
+    allocate (HH_R(num_wann, num_wann, nrpts_pw90))
+    allocate (HH_R_temp(num_wann, num_wann, nrpts))
+
     ! Real-space Hamiltonian H(R) is read from file
     !
     if (effective_model) then
-      HH_R = cmplx_0
+      HH_R_temp = cmplx_0
       if (on_root) then
         write (stdout, '(/a)') ' Reading real-space Hamiltonian from file ' &
           //trim(seedname)//'_HH_R.dat'
@@ -152,7 +155,7 @@ contains
           ! of a simple equality. (This has to do with the way the
           ! Berlijn effective Hamiltonian algorithm is
           ! implemented.)
-          HH_R(j, i, ir) = HH_R(j, i, ir) + cmplx(rdum_real, rdum_imag, kind=dp)
+          HH_R_temp(j, i, ir) = HH_R_temp(j, i, ir) + cmplx(rdum_real, rdum_imag, kind=dp)
           if (new_ir) then
             irvec(:, ir) = ivdum(:)
             if (ivdum(1) == 0 .and. ivdum(2) == 0 .and. ivdum(3) == 0) rpt_origin = ir
@@ -165,14 +168,21 @@ contains
           call io_error('Error in get_HH_R: inconsistent nrpts values')
         endif
         do ir = 1, nrpts
-          crvec(:, ir) = matmul(transpose(real_lattice), irvec(:, ir))
+          crvec(:, ir) = matmul(transpose(real_lattice), real(irvec(:, ir), dp))
         end do
         ndegen(:) = 1 ! This is assumed when reading HH_R from file
+
+        ! setup pw90 R-vectors.
+        ! For effective_model == false, this setup is done in pw90common_wanint_setup.
+        nrpts_pw90 = nrpts
+        irvec_pw90 = irvec
+        crvec_pw90 = crvec
+
         !
         ! TODO: Implement scissors in this case? Need to choose a
         ! uniform k-mesh (the scissors correction is applied in
         ! k-space) and then proceed as below, Fourier transforming
-        ! back to real space and adding to HH_R, Hopefully the
+        ! back to real space and adding to HH_R_temp, Hopefully the
         ! result converges (rapidly) with the k-mesh density, but
         ! one should check
         !
@@ -181,7 +191,7 @@ contains
           'Error in get_HH_R: scissors shift not implemented for ' &
           //'effective_model=T')
       endif
-      call comms_bcast(HH_R(1, 1, 1), num_wann*num_wann*nrpts)
+      call comms_bcast(HH_R_temp(1, 1, 1), num_wann*num_wann*nrpts)
       call comms_bcast(ndegen(1), nrpts)
       call comms_bcast(irvec(1, 1), 3*nrpts)
       call comms_bcast(crvec(1, 1), 3*nrpts)
@@ -217,7 +227,7 @@ contains
         enddo
       enddo
     enddo
-    call fourier_q_to_R(HH_q, HH_R)
+    call fourier_q_to_R(HH_q, HH_R_temp)
 
     ! Scissors correction for an insulator: shift conduction bands upwards by
     ! scissors_shift eV
@@ -242,8 +252,11 @@ contains
         sciss_R(n, n, rpt_origin) = sciss_R(n, n, rpt_origin) + 1.0_dp
       end do
       sciss_R = sciss_R*scissors_shift
-      HH_R = HH_R + sciss_R
+      HH_R_temp = HH_R_temp + sciss_R
     endif
+
+    ! Apply degeneracy factor and reorder according to the wigner-seitz vectors
+    call operator_wigner_setup(HH_R_temp, HH_R)
 
     if (timing_level > 1 .and. on_root) call io_stopwatch('get_oper: get_HH_R', 2)
     return
@@ -267,12 +280,14 @@ contains
     use w90_parameters, only: num_kpts, nntot, num_wann, wb, bk, timing_level, &
       num_bands, ndimwin, nnlist, have_disentangled, &
       transl_inv, nncell, effective_model
-    use w90_postw90_common, only: nrpts
+    use w90_postw90_common, only: nrpts, nrpts_pw90, irvec, &
+      wannier_centres_from_AA_R
     use w90_io, only: stdout, io_file_unit, io_error, io_stopwatch, &
       seedname
     use w90_comms, only: on_root, comms_bcast
 
     complex(kind=dp), allocatable :: AA_q(:, :, :, :)
+    complex(kind=dp), allocatable :: AA_R_temp(:, :, :, :)
     complex(kind=dp), allocatable :: AA_q_diag(:, :)
     complex(kind=dp), allocatable :: S_o(:, :)
     complex(kind=dp), allocatable :: S(:, :)
@@ -289,19 +304,20 @@ contains
 
     if (timing_level > 1 .and. on_root) call io_stopwatch('get_oper: get_AA_R', 1)
 
-    if (.not. allocated(AA_R)) then
-      allocate (AA_R(num_wann, num_wann, nrpts, 3))
-    else
+    if (allocated(AA_R)) then
       if (timing_level > 1 .and. on_root) call io_stopwatch('get_oper: get_AA_R', 2)
       return
     end if
+
+    allocate (AA_R(num_wann, num_wann, nrpts_pw90, 3))
+    allocate (AA_R_temp(num_wann, num_wann, nrpts, 3))
 
     ! Real-space position matrix elements read from file
     !
     if (effective_model) then
       if (.not. allocated(HH_R)) call io_error( &
         'Error in get_AA_R: Must read file'//trim(seedname)//'_HH_R.dat first')
-      AA_R = cmplx_0
+      AA_R_temp = cmplx_0
       if (on_root) then
         write (stdout, '(/a)') ' Reading position matrix elements from file ' &
           //trim(seedname)//'_AA_R.dat'
@@ -326,13 +342,13 @@ contains
                 ivdum(3) /= ivdum_old(3)) ir = ir + 1
           endif
           ivdum_old = ivdum
-          AA_R(j, i, ir, 1) = AA_R(j, i, ir, 1) + cmplx(rdum1_real, rdum1_imag, kind=dp)
-          AA_R(j, i, ir, 2) = AA_R(j, i, ir, 2) + cmplx(rdum2_real, rdum2_imag, kind=dp)
-          AA_R(j, i, ir, 3) = AA_R(j, i, ir, 3) + cmplx(rdum3_real, rdum3_imag, kind=dp)
+          AA_R_temp(j, i, ir, 1) = AA_R_temp(j, i, ir, 1) + cmplx(rdum1_real, rdum1_imag, kind=dp)
+          AA_R_temp(j, i, ir, 2) = AA_R_temp(j, i, ir, 2) + cmplx(rdum2_real, rdum2_imag, kind=dp)
+          AA_R_temp(j, i, ir, 3) = AA_R_temp(j, i, ir, 3) + cmplx(rdum3_real, rdum3_imag, kind=dp)
           n = n + 1
         enddo
         close (file_unit)
-        ! AA_R may not contain the same number of R-vectors as HH_R
+        ! AA_R_temp may not contain the same number of R-vectors as HH_R
         ! (e.g., if a diagonal representation of the position matrix
         ! elements is used, but it cannot be larger
         if (ir > nrpts) then
@@ -340,7 +356,7 @@ contains
           call io_error('Error in get_AA_R: inconsistent nrpts values')
         endif
       endif
-      call comms_bcast(AA_R(1, 1, 1, 1), num_wann*num_wann*nrpts*3)
+      call comms_bcast(AA_R_temp(1, 1, 1, 1), num_wann*num_wann*nrpts*3)
       if (timing_level > 1 .and. on_root) call io_stopwatch('get_oper: get_AA_R', 2)
       return
     endif
@@ -484,13 +500,32 @@ contains
 
       close (mmn_in)
 
-      call fourier_q_to_R(AA_q(:, :, :, 1), AA_R(:, :, :, 1))
-      call fourier_q_to_R(AA_q(:, :, :, 2), AA_R(:, :, :, 2))
-      call fourier_q_to_R(AA_q(:, :, :, 3), AA_R(:, :, :, 3))
+      call fourier_q_to_R(AA_q(:, :, :, 1), AA_R_temp(:, :, :, 1))
+      call fourier_q_to_R(AA_q(:, :, :, 2), AA_R_temp(:, :, :, 2))
+      call fourier_q_to_R(AA_q(:, :, :, 3), AA_R_temp(:, :, :, 3))
 
     endif !on_root
 
-    call comms_bcast(AA_R(1, 1, 1, 1), num_wann*num_wann*nrpts*3)
+    ! save the wannier centers (diagonals of AA_R_temp) to wannier_centres_from_AA_R
+    ! used in pw90common_fourier_R_to_k_new_second_d_TB_conv
+    allocate (wannier_centres_from_AA_R(3, num_wann))
+    wannier_centres_from_AA_R(:, :) = 0.d0
+    do j = 1, num_wann
+      do ir = 1, nrpts
+        if ((irvec(1, ir) .eq. 0) .and. (irvec(2, ir) .eq. 0) .and. (irvec(3, ir) .eq. 0)) then
+          wannier_centres_from_AA_R(1, j) = real(AA_R_temp(j, j, ir, 1))
+          wannier_centres_from_AA_R(2, j) = real(AA_R_temp(j, j, ir, 2))
+          wannier_centres_from_AA_R(3, j) = real(AA_R_temp(j, j, ir, 3))
+        endif
+      enddo
+    enddo
+
+    ! Apply degeneracy factor and reorder according to the wigner-seitz vectors
+    do idir = 1, 3
+      call operator_wigner_setup(AA_R_temp(:, :, :, idir), AA_R(:, :, :, idir))
+    enddo
+
+    call comms_bcast(AA_R(1, 1, 1, 1), num_wann*num_wann*nrpts_pw90*3)
 
     if (timing_level > 1 .and. on_root) call io_stopwatch('get_oper: get_AA_R', 2)
     return
@@ -517,7 +552,7 @@ contains
     use w90_parameters, only: num_kpts, nntot, nnlist, num_wann, num_bands, &
       ndimwin, eigval, wb, bk, have_disentangled, &
       timing_level, nncell, scissors_shift
-    use w90_postw90_common, only: nrpts, v_matrix
+    use w90_postw90_common, only: nrpts, v_matrix, nrpts_pw90
     use w90_io, only: stdout, io_file_unit, io_error, io_stopwatch, &
       seedname
     use w90_comms, only: on_root, comms_bcast
@@ -529,6 +564,7 @@ contains
 
     complex(kind=dp), allocatable :: S_o(:, :)
     complex(kind=dp), allocatable :: BB_q(:, :, :, :)
+    complex(kind=dp), allocatable :: BB_R_temp(:, :, :, :)
     complex(kind=dp), allocatable :: H_q_qb(:, :)
     integer, allocatable          :: num_states(:)
     real(kind=dp)                 :: m_real, m_imag
@@ -536,12 +572,13 @@ contains
     character(len=60)             :: header
 
     if (timing_level > 1 .and. on_root) call io_stopwatch('get_oper: get_BB_R', 1)
-    if (.not. allocated(BB_R)) then
-      allocate (BB_R(num_wann, num_wann, nrpts, 3))
-    else
+
+    if (allocated(BB_R)) then
       if (timing_level > 1 .and. on_root) call io_stopwatch('get_oper: get_BB_R', 2)
       return
     end if
+
+    allocate (BB_R(num_wann, num_wann, nrpts_pw90, 3))
 
     if (on_root) then
 
@@ -549,6 +586,7 @@ contains
         call io_error('Error: scissors correction not yet implemented for BB_R')
 
       allocate (BB_q(num_wann, num_wann, num_kpts, 3))
+      allocate (BB_R_temp(num_wann, num_wann, nrpts, 3))
       allocate (S_o(num_bands, num_bands))
       allocate (H_q_qb(num_wann, num_wann))
 
@@ -631,13 +669,18 @@ contains
 
       close (mmn_in)
 
-      call fourier_q_to_R(BB_q(:, :, :, 1), BB_R(:, :, :, 1))
-      call fourier_q_to_R(BB_q(:, :, :, 2), BB_R(:, :, :, 2))
-      call fourier_q_to_R(BB_q(:, :, :, 3), BB_R(:, :, :, 3))
+      call fourier_q_to_R(BB_q(:, :, :, 1), BB_R_temp(:, :, :, 1))
+      call fourier_q_to_R(BB_q(:, :, :, 2), BB_R_temp(:, :, :, 2))
+      call fourier_q_to_R(BB_q(:, :, :, 3), BB_R_temp(:, :, :, 3))
+
+      ! Apply degeneracy factor and reorder according to the wigner-seitz vectors
+      do idir = 1, 3
+        call operator_wigner_setup(BB_R_temp(:, :, :, idir), BB_R(:, :, :, idir))
+      enddo
 
     endif !on_root
 
-    call comms_bcast(BB_R(1, 1, 1, 1), num_wann*num_wann*nrpts*3)
+    call comms_bcast(BB_R(1, 1, 1, 1), num_wann*num_wann*nrpts_pw90*3)
 
     if (timing_level > 1 .and. on_root) call io_stopwatch('get_oper: get_BB_R', 2)
     return
@@ -663,7 +706,7 @@ contains
       num_bands, ndimwin, wb, bk, &
       have_disentangled, timing_level, &
       scissors_shift, uHu_formatted
-    use w90_postw90_common, only: nrpts, v_matrix
+    use w90_postw90_common, only: nrpts, v_matrix, nrpts_pw90
     use w90_io, only: stdout, io_error, io_stopwatch, io_file_unit, &
       seedname
     use w90_comms, only: on_root, comms_bcast
@@ -673,6 +716,7 @@ contains
 
     integer, allocatable          :: num_states(:)
     complex(kind=dp), allocatable :: CC_q(:, :, :, :, :)
+    complex(kind=dp), allocatable :: CC_R_temp(:, :, :, :, :)
     complex(kind=dp), allocatable :: Ho_qb1_q_qb2(:, :)
     complex(kind=dp), allocatable :: H_qb1_q_qb2(:, :)
     real(kind=dp)                 :: c_real, c_img
@@ -680,12 +724,12 @@ contains
 
     if (timing_level > 1 .and. on_root) call io_stopwatch('get_oper: get_CC_R', 1)
 
-    if (.not. allocated(CC_R)) then
-      allocate (CC_R(num_wann, num_wann, nrpts, 3, 3))
-    else
+    if (allocated(CC_R)) then
       if (timing_level > 1 .and. on_root) call io_stopwatch('get_oper: get_CC_R', 2)
       return
     end if
+
+    allocate (CC_R(num_wann, num_wann, nrpts_pw90, 3, 3))
 
     if (on_root) then
 
@@ -695,6 +739,7 @@ contains
       allocate (Ho_qb1_q_qb2(num_bands, num_bands))
       allocate (H_qb1_q_qb2(num_wann, num_wann))
       allocate (CC_q(num_wann, num_wann, num_kpts, 3, 3))
+      allocate (CC_R_temp(num_wann, num_wann, nrpts, 3, 3))
 
       allocate (num_states(num_kpts))
       do ik = 1, num_kpts
@@ -790,13 +835,20 @@ contains
 
       do b = 1, 3
         do a = 1, 3
-          call fourier_q_to_R(CC_q(:, :, :, a, b), CC_R(:, :, :, a, b))
+          call fourier_q_to_R(CC_q(:, :, :, a, b), CC_R_temp(:, :, :, a, b))
+        enddo
+      enddo
+
+      ! Apply degeneracy factor and reorder according to the wigner-seitz vectors
+      do b = 1, 3
+        do a = 1, 3
+          call operator_wigner_setup(CC_R_temp(:, :, :, a, b), CC_R(:, :, :, a, b))
         enddo
       enddo
 
     endif !on_root
 
-    call comms_bcast(CC_R(1, 1, 1, 1, 1), num_wann*num_wann*nrpts*3*3)
+    call comms_bcast(CC_R(1, 1, 1, 1, 1), num_wann*num_wann*nrpts_pw90*3*3)
 
     if (timing_level > 1 .and. on_root) call io_stopwatch('get_oper: get_CC_R', 2)
     return
@@ -821,7 +873,7 @@ contains
     use w90_parameters, only: num_kpts, nntot, nnlist, num_wann, &
       num_bands, ndimwin, wb, bk, &
       have_disentangled, timing_level
-    use w90_postw90_common, only: nrpts, v_matrix
+    use w90_postw90_common, only: nrpts, v_matrix, nrpts_pw90
     use w90_io, only: stdout, io_error, io_stopwatch, io_file_unit, &
       seedname
     use w90_comms, only: on_root, comms_bcast
@@ -831,24 +883,26 @@ contains
 
     integer, allocatable          :: num_states(:)
     complex(kind=dp), allocatable :: FF_q(:, :, :, :, :)
+    complex(kind=dp), allocatable :: FF_R_temp(:, :, :, :, :)
     complex(kind=dp), allocatable :: Lo_qb1_q_qb2(:, :)
     complex(kind=dp), allocatable :: L_qb1_q_qb2(:, :)
     character(len=60)             :: header
 
     if (timing_level > 1 .and. on_root) call io_stopwatch('get_oper: get_FF_R', 1)
 
-    if (.not. allocated(FF_R)) then
-      allocate (FF_R(num_wann, num_wann, nrpts, 3, 3))
-    else
+    if (allocated(FF_R)) then
       if (timing_level > 1 .and. on_root) call io_stopwatch('get_oper: get_FF_R', 2)
       return
     end if
+
+    allocate (FF_R(num_wann, num_wann, nrpts_pw90, 3, 3))
 
     if (on_root) then
 
       allocate (Lo_qb1_q_qb2(num_bands, num_bands))
       allocate (L_qb1_q_qb2(num_wann, num_wann))
       allocate (FF_q(num_wann, num_wann, num_kpts, 3, 3))
+      allocate (FF_R_temp(num_wann, num_wann, nrpts, 3, 3))
 
       allocate (num_states(num_kpts))
       do ik = 1, num_kpts
@@ -938,13 +992,20 @@ contains
 
       do b = 1, 3
         do a = 1, 3
-          call fourier_q_to_R(FF_q(:, :, :, a, b), FF_R(:, :, :, a, b))
+          call fourier_q_to_R(FF_q(:, :, :, a, b), FF_R_temp(:, :, :, a, b))
+        enddo
+      enddo
+
+      ! Apply degeneracy factor and reorder according to the wigner-seitz vectors
+      do b = 1, 3
+        do a = 1, 3
+          call operator_wigner_setup(FF_R_temp(:, :, :, a, b), FF_R(:, :, :, a, b))
         enddo
       enddo
 
     endif !on_root
 
-    call comms_bcast(FF_R(1, 1, 1, 1, 1), num_wann*num_wann*nrpts*3*3)
+    call comms_bcast(FF_R(1, 1, 1, 1, 1), num_wann*num_wann*nrpts_pw90*3*3)
 
     if (timing_level > 1 .and. on_root) call io_stopwatch('get_oper: get_FF_R', 2)
     return
@@ -965,17 +1026,18 @@ contains
     !
     !================================================================
 
+    use w90_comms, only: on_root, comms_bcast
     use w90_constants, only: dp, pi, cmplx_0
-    use w90_parameters, only: num_wann, ndimwin, num_kpts, num_bands, &
-      timing_level, have_disentangled, spn_formatted
-    use w90_postw90_common, only: nrpts, v_matrix
     use w90_io, only: io_error, io_stopwatch, stdout, seedname, &
       io_file_unit
-    use w90_comms, only: on_root, comms_bcast
+    use w90_parameters, only: num_wann, ndimwin, num_kpts, num_bands, &
+      timing_level, have_disentangled, spn_formatted
+    use w90_postw90_common, only: nrpts, v_matrix, nrpts_pw90
 
     implicit none
 
-    complex(kind=dp), allocatable :: spn_o(:, :, :, :), SS_q(:, :, :, :), spn_temp(:, :)
+    complex(kind=dp), allocatable :: spn_o(:, :, :, :), SS_q(:, :, :, :), &
+                                     spn_temp(:, :), SS_R_temp(:, :, :, :)
     real(kind=dp)                 :: s_real, s_img
     integer, allocatable          :: num_states(:)
     integer                       :: i, j, ii, jj, m, n, spn_in, ik, is, &
@@ -984,16 +1046,18 @@ contains
 
     if (timing_level > 1 .and. on_root) call io_stopwatch('get_oper: get_SS_R', 1)
 
-    if (.not. allocated(SS_R)) then
-      allocate (SS_R(num_wann, num_wann, nrpts, 3))
-    else
-      return ! been here before
+    if (allocated(SS_R)) then
+      if (timing_level > 1 .and. on_root) call io_stopwatch('get_oper: get_SS_R', 2)
+      return
     end if
+
+    allocate (SS_R(num_wann, num_wann, nrpts_pw90, 3))
 
     if (on_root) then
 
       allocate (spn_o(num_bands, num_bands, num_kpts, 3))
       allocate (SS_q(num_wann, num_wann, num_kpts, 3))
+      allocate (SS_R_temp(num_wann, num_wann, nrpts, 3))
 
       allocate (num_states(num_kpts))
       do ik = 1, num_kpts
@@ -1082,13 +1146,18 @@ contains
         enddo !is
       enddo !ik
 
-      call fourier_q_to_R(SS_q(:, :, :, 1), SS_R(:, :, :, 1))
-      call fourier_q_to_R(SS_q(:, :, :, 2), SS_R(:, :, :, 2))
-      call fourier_q_to_R(SS_q(:, :, :, 3), SS_R(:, :, :, 3))
+      call fourier_q_to_R(SS_q(:, :, :, 1), SS_R_temp(:, :, :, 1))
+      call fourier_q_to_R(SS_q(:, :, :, 2), SS_R_temp(:, :, :, 2))
+      call fourier_q_to_R(SS_q(:, :, :, 3), SS_R_temp(:, :, :, 3))
+
+      ! Apply degeneracy factor and reorder according to the wigner-seitz vectors
+      do is = 1, 3
+        call operator_wigner_setup(SS_R_temp(:, :, :, is), SS_R(:, :, :, is))
+      enddo
 
     endif !on_root
 
-    call comms_bcast(SS_R(1, 1, 1, 1), num_wann*num_wann*nrpts*3)
+    call comms_bcast(SS_R(1, 1, 1, 1), num_wann*num_wann*nrpts_pw90*3)
 
     if (timing_level > 1 .and. on_root) call io_stopwatch('get_oper: get_SS_R', 2)
     return
@@ -1117,7 +1186,7 @@ contains
       transl_inv, nncell, spn_formatted, eigval, &
       scissors_shift, num_valence_bands, &
       shc_bandshift, shc_bandshift_firstband, shc_bandshift_energyshift
-    use w90_postw90_common, only: nrpts
+    use w90_postw90_common, only: nrpts, nrpts_pw90
     use w90_io, only: stdout, io_file_unit, io_error, io_stopwatch, &
       seedname
     use w90_comms, only: on_root, comms_bcast
@@ -1125,6 +1194,10 @@ contains
     complex(kind=dp), allocatable :: SR_q(:, :, :, :, :)
     complex(kind=dp), allocatable :: SHR_q(:, :, :, :, :)
     complex(kind=dp), allocatable :: SH_q(:, :, :, :)
+
+    complex(kind=dp), allocatable :: SR_R_temp(:, :, :, :, :)
+    complex(kind=dp), allocatable :: SHR_R_temp(:, :, :, :, :)
+    complex(kind=dp), allocatable :: SH_R_temp(:, :, :, :)
 
     complex(kind=dp), allocatable :: S_o(:, :)
     complex(kind=dp), allocatable :: spn_o(:, :, :, :), spn_temp(:, :)
@@ -1153,24 +1226,14 @@ contains
 
     if (timing_level > 1 .and. on_root) call io_stopwatch('get_oper: get_SHC_R', 1)
 
-    if (.not. allocated(SR_R)) then
-      allocate (SR_R(num_wann, num_wann, nrpts, 3, 3))
-    else
+    if (allocated(SR_R)) then
       if (timing_level > 1 .and. on_root) call io_stopwatch('get_oper: get_SHC_R', 2)
       return
     end if
-    if (.not. allocated(SHR_R)) then
-      allocate (SHR_R(num_wann, num_wann, nrpts, 3, 3))
-    else
-      if (timing_level > 1 .and. on_root) call io_stopwatch('get_oper: get_SHC_R', 2)
-      return
-    end if
-    if (.not. allocated(SH_R)) then
-      allocate (SH_R(num_wann, num_wann, nrpts, 3))
-    else
-      if (timing_level > 1 .and. on_root) call io_stopwatch('get_oper: get_SHC_R', 2)
-      return
-    end if
+
+    allocate (SR_R(num_wann, num_wann, nrpts_pw90, 3, 3))
+    allocate (SHR_R(num_wann, num_wann, nrpts_pw90, 3, 3))
+    allocate (SH_R(num_wann, num_wann, nrpts_pw90, 3))
 
     ! start copying from get_SS_R, Junfeng Qiao
     ! read spn file
@@ -1288,6 +1351,9 @@ contains
       allocate (SR_q(num_wann, num_wann, num_kpts, 3, 3))
       allocate (SHR_q(num_wann, num_wann, num_kpts, 3, 3))
       allocate (SH_q(num_wann, num_wann, num_kpts, 3))
+      allocate (SR_R_temp(num_wann, num_wann, nrpts_pw90, 3, 3))
+      allocate (SHR_R_temp(num_wann, num_wann, nrpts_pw90, 3, 3))
+      allocate (SH_R_temp(num_wann, num_wann, nrpts_pw90, 3))
       allocate (S_o(num_bands, num_bands))
 
       mmn_in = io_file_unit()
@@ -1420,22 +1486,31 @@ contains
 
       do is = 1, 3
         ! QZYZ18 Eq.(46)
-        call fourier_q_to_R(SH_q(:, :, :, is), SH_R(:, :, :, is))
+        call fourier_q_to_R(SH_q(:, :, :, is), SH_R_temp(:, :, :, is))
         do idir = 1, 3
           ! QZYZ18 Eq.(44)
-          call fourier_q_to_R(SR_q(:, :, :, is, idir), SR_R(:, :, :, is, idir))
+          call fourier_q_to_R(SR_q(:, :, :, is, idir), SR_R_temp(:, :, :, is, idir))
           ! QZYZ18 Eq.(45)
-          call fourier_q_to_R(SHR_q(:, :, :, is, idir), SHR_R(:, :, :, is, idir))
+          call fourier_q_to_R(SHR_q(:, :, :, is, idir), SHR_R_temp(:, :, :, is, idir))
         end do
       end do
-      SR_R = cmplx_i*SR_R
-      SHR_R = cmplx_i*SHR_R
+      SR_R_temp = cmplx_i*SR_R_temp
+      SHR_R_temp = cmplx_i*SHR_R_temp
+
+      ! Apply degeneracy factor and reorder according to the wigner-seitz vectors
+      do is = 1, 3
+        call operator_wigner_setup(SH_R_temp(:, :, :, is), SH_R(:, :, :, is))
+        do idir = 1, 3
+          call operator_wigner_setup(SR_R_temp(:, :, :, is, idir), SR_R(:, :, :, is, idir))
+          call operator_wigner_setup(SHR_R_temp(:, :, :, is, idir), SHR_R(:, :, :, is, idir))
+        enddo
+      enddo
 
     endif !on_root
 
-    call comms_bcast(SH_R(1, 1, 1, 1), num_wann*num_wann*nrpts*3)
-    call comms_bcast(SR_R(1, 1, 1, 1, 1), num_wann*num_wann*nrpts*3*3)
-    call comms_bcast(SHR_R(1, 1, 1, 1, 1), num_wann*num_wann*nrpts*3*3)
+    call comms_bcast(SH_R(1, 1, 1, 1), num_wann*num_wann*nrpts_pw90*3)
+    call comms_bcast(SR_R(1, 1, 1, 1, 1), num_wann*num_wann*nrpts_pw90*3*3)
+    call comms_bcast(SHR_R(1, 1, 1, 1, 1), num_wann*num_wann*nrpts_pw90*3*3)
 
     ! end copying from get_AA_R, Junfeng Qiao
 
@@ -1980,5 +2055,55 @@ contains
     call comms_bcast(svel_r_pwf(1, 1, 1, 1), 3*num_wann*num_wann*nrpts)
 
   end subroutine get_vel_r_pwf_jml
+
+  subroutine operator_wigner_setup(op_R, op_R_opt_ws)
+    !==========================================================================
+    !
+    ! Also, divide real-space matrix elements with the degeneracy factor.
+    ! For use_ws_distance = true, reorder the real-space grid index
+    ! using ir_ind_ws_to_pw90.
+    !
+    ! After this routine, irvec_pw90, crvec_pw90, and nrpts_pw90 can be
+    ! used in the fourier_R_to_k routines, irrespective of use_ws_distance.
+    !
+    !==========================================================================
+
+    use w90_constants, only: dp, cmplx_0
+    use w90_ws_distance, only: wdist_ndeg
+    use w90_parameters, only: num_wann, use_ws_distance
+    use w90_postw90_common, only: nrpts, ndegen, nrpts_pw90, irvec_pw90, &
+      ir_ind_ws_to_pw90
+
+    complex(kind=dp), intent(in) :: op_R(num_wann, num_wann, nrpts)
+    !! operator in real-space grid, before applying ndegen
+    complex(kind=dp), intent(inout) :: op_R_opt_ws(num_wann, num_wann, nrpts_pw90)
+    !! operator in real-space grid, after applying ndegen
+
+    integer :: ir, jr, i, j, ideg
+
+    op_R_opt_ws = cmplx_0
+
+    if (use_ws_distance) then
+
+      do ir = 1, nrpts
+        do j = 1, num_wann
+          do i = 1, num_wann
+            do ideg = 1, wdist_ndeg(i, j, ir)
+              jr = ir_ind_ws_to_pw90(ideg, i, j, ir)
+              op_R_opt_ws(i, j, jr) = op_R_opt_ws(i, j, jr) &
+                                      + op_R(i, j, ir)/real(ndegen(ir)*wdist_ndeg(i, j, ir), dp)
+            enddo
+          enddo
+        enddo
+      enddo
+
+    else ! .not. use_ws_distance
+      ! Note that nrpts_pw90 == nrpts if use_ws_distance == .false.
+      do ir = 1, nrpts
+        op_R_opt_ws(:, :, ir) = op_R(:, :, ir)/real(ndegen(ir), dp)
+      enddo
+    endif ! use_ws_distance
+
+  end subroutine operator_wigner_setup
 
 end module w90_get_oper

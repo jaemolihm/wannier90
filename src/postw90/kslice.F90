@@ -49,7 +49,7 @@ contains
       io_time, io_stopwatch, stdout
     use w90_utility, only: utility_diagonalize, utility_recip_lattice
     use w90_postw90_common, only: pw90common_fourier_R_to_k_new
-    use w90_parameters, only: num_wann, kslice, kslice_task, kslice_2dkmesh, &
+    use w90_parameters, only: num_wann, kslice_task, kslice_2dkmesh, &
       kslice_corner, kslice_b1, kslice_b2, &
       kslice_fermi_lines_colour, recip_lattice, &
       nfermi, fermi_energy_list, berry_curv_unit, kubo_adpt_smr

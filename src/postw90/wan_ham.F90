@@ -506,8 +506,6 @@ contains
     complex(kind=dp), dimension(:, :, :), intent(out)    :: HH_da
     complex(kind=dp), dimension(:, :, :, :), intent(out) :: HH_dadb
 
-    integer                       :: i
-
     call get_HH_R
     ! wannier_centres_from_AA_R is set inside get_AA_R, and used in
     ! pw90common_fourier_R_to_k_new_second_d_TB_conv
@@ -538,8 +536,6 @@ contains
     complex(kind=dp), dimension(:, :), intent(out)     :: HH
     complex(kind=dp), dimension(:, :, :), intent(out)       :: HH_da
     complex(kind=dp), dimension(:, :, :, :), intent(out)     :: HH_dadb
-
-    integer                       :: i
 
     call get_HH_R
 

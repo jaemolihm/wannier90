@@ -1767,8 +1767,8 @@ contains
             vel_inv_e_q(ib, jb) = vel_q_cart(ahc_nbndskip+ib, jb, jdir, ik) / (eigval(jb, ik) - eigval(ib, ik))
           enddo
         enddo
-        vel_inv_e_q = (0.d0, -1.d0) * vel_inv_e_q
-        svel_inv_e_q = (0.d0, -1.d0) * svel_inv_e_q
+        ! vel_inv_e_q = (0.d0, -1.d0) * vel_inv_e_q
+        ! svel_inv_e_q = (0.d0, -1.d0) * svel_inv_e_q
 
         ! add svel_inv_e_q.H * qmat * vel_inv_e_q to omega_q_cart_add
 
@@ -1830,9 +1830,10 @@ contains
     !==================================================
     use w90_io, only : io_file_unit, io_error
     use w90_comms, only : on_root, comms_bcast
-    use w90_constants, only : bohr_angstrom_internal, eV_au
+    use w90_constants, only : bohr_angstrom_internal, eV_au, cmplx_0
     use w90_parameters, only: num_bands, num_wann, ndimwin, num_kpts, &
-        have_disentangled, eigval, ahc_dir, ahc_nbnd_full, ahc_nbndskip
+        have_disentangled, eigval, ahc_dir, ahc_nbnd_full, ahc_nbndskip, &
+        dis_froz_max, dis_froz_min
     use w90_postw90_common, only: nrpts, v_matrix, nrpts_pw90
     use w90_utility, only : utility_zgemmm, utility_zgemm_new
 
@@ -1855,8 +1856,8 @@ contains
     complex(kind=dp), allocatable :: svel_r_pwf_temp(:, :, :, :)
     !! svel at real space R grid, in wannier basis
 
-    complex(kind=dp), allocatable :: vel_inv_e_q(:,:), svel_inv_e_q(:,:), &
-      vel_q_add(:,:), svel_q_add(:,:), qmat(:,:), mat_temp(:,:), mat_temp2(:,:), &
+    complex(kind=dp), allocatable :: vel_inv_e_q(:, :, :), svel_inv_e_q(:, :, :), &
+      vel_q_add(:, :), svel_q_add(:, :), qmat(:,:), mat_temp(:,:), mat_temp2(:,:), &
       qmat_small(:,:)
     integer, allocatable :: num_states(:)
     integer :: ik, file_unit, recl, ib1, ib2, ib, jb, idir
@@ -1921,25 +1922,27 @@ contains
         endif
       enddo
 
-      vel_q = (0.d0, 0.d0)
-      svel_q = (0.d0, 0.d0)
+      vel_q = cmplx_0
+      svel_q = cmplx_0
 
       do ik = 1, num_kpts
 
-        ! vel_inv_e_q(i, j) = -1j * vel_q_cart(i, j, ik) / ( eigval(j, ik) - eigval(i, ik) )
-        allocate (vel_inv_e_q(num_bands, num_bands))
-        allocate (svel_inv_e_q(num_bands, num_bands))
-        vel_inv_e_q = (0.d0, 0.d0)
-        svel_inv_e_q = (0.d0, 0.d0)
-        do jb = 1, num_bands
-          do ib = 1, num_bands
-            if (abs(eigval(jb, ik) - eigval(ib, ik)) < 1.d-5) cycle
-            svel_inv_e_q(ib, jb) = svel_q_cart(ahc_nbndskip+ib, jb, 1, ik) / (eigval(jb, ik) - eigval(ib, ik))
-            vel_inv_e_q(ib, jb) = vel_q_cart(ahc_nbndskip+ib, jb, 2, ik) / (eigval(jb, ik) - eigval(ib, ik))
+        ! vel_inv_e_q(i, j) = vel_q_cart(i, j, ik) / ( eigval(j, ik) - eigval(i, ik) )
+        allocate (vel_inv_e_q(num_bands, num_bands, 3))
+        allocate (svel_inv_e_q(num_bands, num_bands, 3))
+        vel_inv_e_q = cmplx_0
+        svel_inv_e_q = cmplx_0
+        do idir = 1, 3
+          do jb = 1, num_bands
+            do ib = 1, num_bands
+              if (abs(eigval(jb, ik) - eigval(ib, ik)) < 1.d-5) cycle
+              svel_inv_e_q(ib, jb, idir) &
+              = svel_q_cart(ahc_nbndskip+ib, jb, idir, ik) / (eigval(jb, ik) - eigval(ib, ik))
+              vel_inv_e_q(ib, jb, idir) &
+              = vel_q_cart(ahc_nbndskip+ib, jb, idir, ik) / (eigval(jb, ik) - eigval(ib, ik))
+            enddo
           enddo
         enddo
-        vel_inv_e_q = (0.d0, -1.d0) * vel_inv_e_q
-        svel_inv_e_q = (0.d0, -1.d0) * svel_inv_e_q
 
         ! qmat = 1 - v_matrix * v_matrix.H
         call utility_zgemm_new(v_matrix(:,:,ik), v_matrix(:,:,ik), qmat, 'N', 'C')
@@ -1953,31 +1956,42 @@ contains
           enddo
         enddo
 
-        ! Compute vel_q_add(i,j) += -1j * (vel_inv_e_q.H * qmat)(i,j) * eigval(j, ik) for i <= 8
-        ! Compute vel_q_add(j,i) +=  1j * (  qmat * vel_inv_e_q)(j,i) * eigval(j, ik) for i <= 8
-        call utility_zgemm_new(vel_inv_e_q, qmat_small, mat_temp, 'C', 'N')
+        ! Compute vel_q_add(i,j) += (vel_inv_e_q.H * qmat)(i,j) * eigval(j, ik) for i in frozen window
+        ! Compute vel_q_add(j,i) += (  qmat * vel_inv_e_q)(j,i) * eigval(j, ik) for i in frozen window
 
-        vel_q_add = (0.d0, 0.d0)
-        do ib = 1, 8
-          do jb = 1, num_bands
-            vel_q_add(ib, jb) = vel_q_add(ib, jb) + (0.d0,-1.d0) * mat_temp(ib, jb) * eigval(jb, ik)
-            vel_q_add(jb, ib) = vel_q_add(jb, ib) + (0.d0, 1.d0) * conjg(mat_temp(ib, jb)) * eigval(jb, ik)
+        do idir = 1, 3
+          ! mat_temp = vel_inv_e_q.H * qmat
+          call utility_zgemm_new(vel_inv_e_q(:, :, idir), qmat_small, mat_temp, 'C', 'N')
+
+          vel_q_add = cmplx_0
+          do ib = 1, num_bands
+            ! only frozen states
+            if (eigval(ib, ik) > dis_froz_max .or. eigval(ib, ik) < dis_froz_min) cycle
+
+            do jb = 1, num_bands
+              vel_q_add(ib, jb) = vel_q_add(ib, jb) + mat_temp(ib, jb) * eigval(jb, ik)
+              vel_q_add(jb, ib) = vel_q_add(jb, ib) + conjg(mat_temp(ib, jb)) * eigval(jb, ik)
+            enddo
           enddo
-        enddo
 
-        ! same for svel_q_add
-        call utility_zgemm_new(svel_inv_e_q, qmat_small, mat_temp, 'C', 'N')
+          ! same for svel_q_add
+          call utility_zgemm_new(svel_inv_e_q(:, :, idir), qmat_small, mat_temp, 'C', 'N')
 
-        svel_q_add = (0.d0, 0.d0)
-        do ib = 1, 8
-          do jb = 1, num_bands
-            svel_q_add(ib, jb) = svel_q_add(ib, jb) + (0.d0,-1.d0) * mat_temp(ib, jb) * eigval(jb, ik)
-            svel_q_add(jb, ib) = svel_q_add(jb, ib) + (0.d0, 1.d0) * conjg(mat_temp(ib, jb)) * eigval(jb, ik)
+          svel_q_add = cmplx_0
+          do ib = 1, num_bands
+            ! only frozen states
+            if (eigval(ib, ik) > dis_froz_max .or. eigval(ib, ik) < dis_froz_min) cycle
+
+            do jb = 1, num_bands
+              svel_q_add(ib, jb) = svel_q_add(ib, jb) + mat_temp(ib, jb) * eigval(jb, ik)
+              svel_q_add(jb, ib) = svel_q_add(jb, ib) + conjg(mat_temp(ib, jb)) * eigval(jb, ik)
+            enddo
           enddo
-        enddo
 
-        ! vel_q(:, :, ik) = vel_q(:, :, ik) + vel_q_add
-        ! svel_q(:, :, ik) = svel_q(:, :, ik) + svel_q_add
+          vel_q(:, :, ik, idir) = vel_q(:, :, ik, idir) + vel_q_add
+          svel_q(:, :, ik, idir) = svel_q(:, :, ik, idir) + svel_q_add
+
+        enddo ! idir
 
         do idir = 1, 3
           vel_q(:, :, ik, idir) = vel_q(:, :, ik, idir) &
@@ -1992,8 +2006,8 @@ contains
       enddo ! ik
 
       ! Unit conversion: QE is in Rydberg atomic units, W90 is in angstrom, eV.
-      vel_q = vel_q * bohr_angstrom_internal * 0.5 / eV_au
-      svel_q = svel_q * bohr_angstrom_internal * 0.5 / eV_au
+      vel_q = vel_q * bohr_angstrom_internal * 0.5_dp / eV_au
+      svel_q = svel_q * bohr_angstrom_internal * 0.5_dp / eV_au
 
       ! rotate vel_q from eigenbasis to wannier basis
       ! FIXME: get_win_min

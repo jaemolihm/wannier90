@@ -2066,9 +2066,9 @@ contains
         !prod = -rfac*cmplx_i*AA(n, m, shc_alpha) * rfac*cmplx_i*AA(m, n, shc_beta)
         prod = js_k(n, m)*cmplx_i*rfac*AA(m, n, shc_beta)
 
-        ! if (use_pwf_jml) then
-        !   prod = delhh_svel(n, m, 1) * delhh_vel(m, n, 2)
-        ! endif
+        if (use_pwf_jml) then
+          prod = delhh_svel(n, m, 1) * delhh_vel(m, n, 2)
+        endif
 
         if (kubo_adpt_smr) then
           ! Eq.(35) YWVS07

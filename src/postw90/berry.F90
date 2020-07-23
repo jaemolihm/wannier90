@@ -1880,7 +1880,11 @@ contains
   end subroutine berry_get_sc_klist
 
 ! BEGIN JML perturbed Wannier functions -----------------------------------
-  subroutine pwf_jml_get_omegak(kpt, UU, omega_k, delhh_svel, delhh_vel)
+  subroutine pwf_jml_get_omegak(kpt, UU, omega_k, delhh_svel, delhh_vel, alpha, beta)
+    !
+    ! alpha: direction of spin-velocity matrix
+    ! beta: direction of velocity matrix
+    !
     use w90_parameters, only: num_wann
     use w90_utility, only : utility_rotate_new
     use w90_postw90_common, only: pw90common_fourier_R_to_k_new, pw90common_fourier_R_to_k_vec
@@ -1889,25 +1893,26 @@ contains
     implicit none
 
     ! args
-    integer :: i
     real(kind=dp) :: kpt(3)
     complex(kind=dp) :: UU(num_wann, num_wann)
     complex(kind=dp) :: omega_k(num_wann, num_wann)
-    complex(kind=dp) :: delhh_svel(num_wann, num_wann, 3)
-    complex(kind=dp) :: delhh_vel(num_wann, num_wann, 3)
+    complex(kind=dp) :: delhh_svel(num_wann, num_wann)
+    complex(kind=dp) :: delhh_vel(num_wann, num_wann)
+    integer, intent(in) :: alpha
+    !! Direction of the spin-velocity matrix
+    integer, intent(in) :: beta
+    !! Direction of the velocity matrix
+
+    integer :: i
 
     call pw90common_fourier_R_to_k_new(kpt, omega_r_pwf, OO=omega_k)
     call utility_rotate_new(omega_k, UU, num_wann)
 
-    call pw90common_fourier_R_to_k_vec(kpt, svel_r_pwf, OO_true=delhh_svel)
-    do i = 1, 3
-      call utility_rotate_new(delhh_svel(:, :, i), UU, num_wann)
-    enddo
+    call pw90common_fourier_R_to_k_new(kpt, svel_r_pwf(:, :, :, alpha), OO=delhh_svel)
+    call utility_rotate_new(delhh_svel, UU, num_wann)
 
-    call pw90common_fourier_R_to_k_vec(kpt, vel_r_pwf, OO_true=delhh_vel)
-    do i = 1, 3
-      call utility_rotate_new(delhh_vel(:, :, i), UU, num_wann)
-    enddo
+    call pw90common_fourier_R_to_k_new(kpt, vel_r_pwf(:, :, :, beta), OO=delhh_vel)
+    call utility_rotate_new(delhh_vel, UU, num_wann)
 
   end subroutine pwf_jml_get_omegak
 ! END JML perturbed Wannier functions -----------------------------------
@@ -1936,7 +1941,7 @@ contains
     !====================================================================!
 
     use w90_constants, only: dp, cmplx_0, cmplx_i
-    use w90_utility, only: utility_rotate_new
+    use w90_utility, only: utility_rotate_new, utility_diagonalize
     use w90_parameters, only: num_wann, kubo_eigval_max, kubo_nfreq, &
       kubo_freq_list, kubo_adpt_smr, kubo_smr_fixed_en_width, &
       kubo_adpt_smr_max, kubo_adpt_smr_fac, berry_kmesh, &
@@ -1944,9 +1949,10 @@ contains
       shc_bandshift, shc_bandshift_firstband, shc_bandshift_energyshift, &
       use_pwf_jml
     use w90_postw90_common, only: pw90common_get_occ, &
-      pw90common_fourier_R_to_k_vec, pw90common_kmesh_spacing
+      pw90common_fourier_R_to_k_vec, pw90common_kmesh_spacing, &
+      pw90common_fourier_R_to_k_new
     use w90_wan_ham, only: wham_get_D_h, wham_get_eig_deleig
-    use w90_get_oper, only: AA_R
+    use w90_get_oper, only: AA_R, HH_R
     use w90_parameters, only : jml_only_inter_gap, jml_num_elec
     !use w90_comms, only: my_node_id
     !!!
@@ -1968,8 +1974,8 @@ contains
 
     ! JML: pwf
     complex(kind=dp), allocatable :: omega_k(:, :)
-    complex(kind=dp), allocatable :: delhh_svel(:, :, :)
-    complex(kind=dp), allocatable :: delhh_vel(:, :, :)
+    complex(kind=dp), allocatable :: delhh_svel(:, :)
+    complex(kind=dp), allocatable :: delhh_vel(:, :)
 
 
     ! Adaptive smearing
@@ -1992,8 +1998,8 @@ contains
 
     ! JML: pwf
     allocate (omega_k(num_wann, num_wann))
-    allocate (delhh_svel(num_wann, num_wann, 3))
-    allocate (delhh_vel(num_wann, num_wann, 3))
+    allocate (delhh_svel(num_wann, num_wann))
+    allocate (delhh_vel(num_wann, num_wann))
 
     lfreq = .false.
     lfermi = .false.
@@ -2011,25 +2017,30 @@ contains
       lband = .true.
     endif
 
-    call wham_get_eig_deleig(kpt, eig, del_eig, HH, delHH, UU)
-    call wham_get_D_h(delHH, UU, eig, D_h)
 
-    ! Here I apply a scissor operator to the conduction bands, if required in the input
-    if (shc_bandshift) then
-      eig(shc_bandshift_firstband:) = eig(shc_bandshift_firstband:) + shc_bandshift_energyshift
-    end if
+    if (.not. use_pwf_jml) then
+      call wham_get_eig_deleig(kpt, eig, del_eig, HH, delHH, UU)
+      call wham_get_D_h(delHH, UU, eig, D_h)
 
-    call pw90common_fourier_R_to_k_vec(kpt, AA_R, OO_true=AA)
-    do i = 1, 3
-      call utility_rotate_new(AA(:, :, i), UU, num_wann)
-    enddo
-    AA = AA + cmplx_i*D_h ! Eq.(25) WYSV06
+      ! Here I apply a scissor operator to the conduction bands, if required in the input
+      if (shc_bandshift) then
+        eig(shc_bandshift_firstband:) = eig(shc_bandshift_firstband:) + shc_bandshift_energyshift
+      end if
 
-    if (use_pwf_jml) call pwf_jml_get_omegak(kpt, UU, omega_k, delhh_svel, delhh_vel)
+      call pw90common_fourier_R_to_k_vec(kpt, AA_R, OO_true=AA)
+      do i = 1, 3
+        call utility_rotate_new(AA(:, :, i), UU, num_wann)
+      enddo
+      AA = AA + cmplx_i*D_h ! Eq.(25) WYSV06
 
+      call berry_get_js_k(kpt, eig, del_eig(:, shc_alpha), &
+                          D_h(:, :, shc_alpha), UU, js_k)
+    else ! use_pwf_jml
+      call pw90common_fourier_R_to_k_new(kpt, HH_R, OO=HH)
+      call utility_diagonalize(HH, num_wann, eig, UU)
+      call pwf_jml_get_omegak(kpt, UU, omega_k, delhh_svel, delhh_vel, shc_alpha, shc_beta)
+    endif ! use_pwf_jml
 
-    call berry_get_js_k(kpt, eig, del_eig(:, shc_alpha), &
-                        D_h(:, :, shc_alpha), UU, js_k)
 
     ! adpt_smr only works with berry_kmesh, so do not use
     ! adpt_smr in kpath or kslice plots.
@@ -2062,13 +2073,14 @@ contains
         if (jml_only_inter_gap .and. m <= jml_num_elec) cycle
 
         rfac = eig(m) - eig(n)
-        !this will calculate AHC
-        !prod = -rfac*cmplx_i*AA(n, m, shc_alpha) * rfac*cmplx_i*AA(m, n, shc_beta)
-        prod = js_k(n, m)*cmplx_i*rfac*AA(m, n, shc_beta)
 
-        if (use_pwf_jml) then
-          prod = delhh_svel(n, m, 1) * delhh_vel(m, n, 2)
-        endif
+        if (.not. use_pwf_jml) then
+          !this will calculate AHC
+          !prod = -rfac*cmplx_i*AA(n, m, shc_alpha) * rfac*cmplx_i*AA(m, n, shc_beta)
+          prod = js_k(n, m)*cmplx_i*rfac*AA(m, n, shc_beta)
+        else ! use_pwf_jml
+          prod = delhh_svel(n, m) * delhh_vel(m, n)
+        endif ! use_pwf_jml
 
         if (kubo_adpt_smr) then
           ! Eq.(35) YWVS07

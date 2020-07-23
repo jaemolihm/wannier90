@@ -645,7 +645,8 @@ contains
     !============================================================!
 
     use w90_constants, only: dp, cmplx_0
-    use w90_io, only: io_error, stdout
+    use w90_io, only: io_error, stdout, io_stopwatch
+    use w90_comms, only : on_root
 
     integer, intent(in)           :: dim
     complex(kind=dp), intent(in)  :: mat(dim, dim)
@@ -655,6 +656,8 @@ contains
     complex(kind=dp)   :: mat_pack((dim*(dim + 1))/2), cwork(2*dim)
     real(kind=dp)      :: rwork(7*dim)
     integer            :: i, j, info, nfound, iwork(5*dim), ifail(dim)
+
+    if (on_root) call io_stopwatch('utility: diagonalize', 1)
 
     do j = 1, dim
       do i = 1, j
@@ -673,6 +676,8 @@ contains
       write (stdout, '(i3,a)') info, ' EIGENVECTORS FAILED TO CONVERGE'
       call io_error('Error in utility_diagonalize')
     endif
+
+    if (on_root) call io_stopwatch('utility: diagonalize', 2)
 
   end subroutine utility_diagonalize
 

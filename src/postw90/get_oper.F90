@@ -2063,24 +2063,53 @@ contains
 
       do idir = 1, 3
         call fourier_q_to_R(vel_q_w(:, :, :, idir), vel_r_pwf_temp(:, :, :, idir))
-        call fourier_q_to_R(svel_q_w(:, :, :, idir), svel_r_pwf_temp(:, :, :, idir))
+        if (spinors) call fourier_q_to_R(svel_q_w(:, :, :, idir), svel_r_pwf_temp(:, :, :, idir))
       enddo
 
       ! Apply degeneracy factor and reorder according to the wigner-seitz vectors
       do idir = 1, 3
         call operator_wigner_setup(vel_r_pwf_temp(:, :, :, idir), vel_r_pwf(:, :, :, idir))
-        call operator_wigner_setup(svel_r_pwf_temp(:, :, :, idir), svel_r_pwf(:, :, :, idir))
+        if (spinors) call operator_wigner_setup(svel_r_pwf_temp(:, :, :, idir), svel_r_pwf(:, :, :, idir))
       enddo
 
     endif
 
     if (.not. on_root) then
       allocate(vel_r_pwf(num_wann, num_wann, nrpts_pw90, 3))
-      allocate(svel_r_pwf(num_wann, num_wann, nrpts_pw90, 3))
+      if (spinors) allocate(svel_r_pwf(num_wann, num_wann, nrpts_pw90, 3))
     endif
 
     call comms_bcast(vel_r_pwf(1, 1, 1, 1), 3*num_wann*num_wann*nrpts_pw90)
-    call comms_bcast(svel_r_pwf(1, 1, 1, 1), 3*num_wann*num_wann*nrpts_pw90)
+    if (spinors) call comms_bcast(svel_r_pwf(1, 1, 1, 1), 3*num_wann*num_wann*nrpts_pw90)
+
+    ! DEBUG
+    ! Write vel_r to file
+    if (on_root) then
+      inquire(iolength=recl) real_lattice
+      open(666, file='real_lattice.bin', form='unformatted', access='direct', recl=recl)
+      write(666, rec=1) real_lattice
+      close(666)
+
+      inquire(iolength=recl) irvec_pw90
+      open(666, file='irvec_pw90.bin', form='unformatted', access='direct', recl=recl)
+      write(666, rec=1) irvec_pw90
+      close(666)
+
+      inquire(iolength=recl) vel_r_pwf
+      open(666, file='vel_r_pwf.bin', form='unformatted', access='direct', recl=recl)
+      write(666, rec=1) vel_r_pwf
+      close(666)
+
+      inquire(iolength=recl) AA_R
+      open(666, file='AA_R.bin', form='unformatted', access='direct', recl=recl)
+      write(666, rec=1) AA_R
+      close(666)
+
+      inquire(iolength=recl) HH_R
+      open(666, file='HH_R.bin', form='unformatted', access='direct', recl=recl)
+      write(666, rec=1) HH_R
+      close(666)
+    endif
 
   end subroutine get_vel_r_pwf_jml
 

@@ -106,7 +106,7 @@ contains
       kubo_adpt_smr_max, kubo_smr_fixed_en_width, &
       scissors_shift, num_valence_bands, &
       shc_bandshift, shc_bandshift_firstband, shc_bandshift_energyshift, &
-      use_pwf_jml
+      use_pwf_jml, spinors
     use w90_get_oper, only: get_HH_R, get_AA_R, get_BB_R, get_CC_R, &
       get_SS_R, get_SHC_R, get_vel_r_pwf_jml, get_omega_r_pwf_jml
 
@@ -287,7 +287,7 @@ contains
 
     if (use_pwf_jml) then
       call get_vel_r_pwf_jml
-      call get_omega_r_pwf_jml
+      if (spinors) call get_omega_r_pwf_jml
     endif
 
     if (on_root) then

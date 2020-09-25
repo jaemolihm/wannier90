@@ -62,6 +62,8 @@ module w90_get_oper
   !! vel_r_pwf at Wannier basis.
   complex(kind=dp), allocatable, save :: svel_r_pwf(:, :, :, :)
   !! svel_r_pwf at Wannier basis.
+  complex(kind=dp), allocatable, save :: dsuru_r_pwf(:, :, :)
+  !! omega_r_pwf at Wannier basis.
   ! END JML
 
 contains
@@ -1783,7 +1785,7 @@ contains
         enddo
 
         omega_q_cart(:, :, idir, jdir, ik) = omega_q_cart(:, :, idir, jdir, ik) &
-         + omega_q_cart_add * (0.5 / eV_au) ** 2
+         + omega_q_cart_add * (0.5_dp / eV_au) ** 2
 
       enddo ! ik
 
@@ -1822,6 +1824,245 @@ contains
     call comms_bcast(omega_r_pwf(1, 1, 1), num_wann*num_wann*nrpts_pw90)
 
   end subroutine get_omega_r_pwf_jml
+
+
+  !============================================================================
+  subroutine get_dsuru_r_pwf_jml
+  !============================================================================
+  ! Transform Omega from coarse k to coarse R grid.
+  !
+  ! omega_q = omega_q_cart (from file)
+  !         + svel_inv_e_q.H * qmat * vel_inv_e_q
+  !
+  ! qmat = 1 - v_matrix * v_matrix.H
+  !  vel_inv_e_q = -1j *  vel_q_cart(i, j, ik) / (eigval(j, ik) - eigval(i, ik))
+  ! svel_inv_e_q = -1j * svel_q_cart(i, j, ik) / (eigval(j, ik) - eigval(i, ik))
+  !
+  !============================================================================
+    use w90_io, only : io_file_unit, io_error
+    use w90_comms, only : on_root, comms_bcast
+    use w90_constants, only : bohr_angstrom_internal, eV_au
+    use w90_parameters, only: num_bands, num_wann, ndimwin, num_kpts, &
+        have_disentangled, eigval, ahc_dir, ahc_nbnd_full, ahc_nbndskip, &
+        dis_froz_min, dis_froz_max, &
+        exclude_bands, num_exclude_bands
+    use w90_postw90_common, only: nrpts, v_matrix, nrpts_pw90
+    use w90_utility, only : utility_zgemmm, utility_zgemm_new
+
+    implicit none
+
+    complex(kind=dp), allocatable :: dsuru_q_cart(:, :, :, :, :)
+    !! omega at coarse k grid. Computed by ahc.f90.
+    complex(kind=dp), allocatable :: vel_q_cart(:, :, :, :)
+    !! vel_q at coarse k grid. Computed by ahc.f90.
+    complex(kind=dp), allocatable :: svel_q_cart(:, :, :, :)
+    !! vel_q at coarse k grid. Computed by ahc.f90.
+    complex(kind=dp), allocatable :: dsuru_q(:, :, :)
+    !! omega at coarse k grid, in wannier basis
+    complex(kind=dp), allocatable :: dsuru_r_pwf_temp(:, :, :)
+    !! omega at real-space R grid, in wannier basis
+
+    complex(kind=dp), allocatable :: svel_inv_e_q(:,:), dsuru_q_cart_add(:,:), qmat(:,:), &
+      vel_q(:, :)
+    real(kind=dp), allocatable :: energy_full(:, :)
+    integer, allocatable :: num_states(:)
+    integer :: ik, file_unit, recl, ib1, ib2, ib, jb, kb, idir, jdir, i
+
+    ! We assume ahc_nbnd for ph.x input is equal to num_bands (after exclusion) here.
+
+    if (allocated(dsuru_r_pwf)) then
+      return
+    endif
+
+    allocate(dsuru_r_pwf(num_wann, num_wann, nrpts_pw90))
+
+    if (on_root) then
+
+      idir = 1
+      jdir = 2
+
+      allocate(dsuru_r_pwf_temp(num_wann, num_wann, nrpts))
+
+      allocate (dsuru_q_cart(num_bands, num_bands, 3, 3, num_kpts))
+      allocate (vel_q_cart(ahc_nbnd_full, num_bands, 3, num_kpts))
+      allocate (svel_q_cart(ahc_nbnd_full, num_bands, 3, num_kpts))
+
+      allocate (dsuru_q(num_wann, num_wann, num_kpts))
+
+      allocate (dsuru_q_cart_add(num_bands, num_bands))
+      allocate (qmat(num_bands, num_bands))
+
+      allocate (vel_q(num_bands, num_bands))
+      allocate (svel_inv_e_q(num_bands, num_bands))
+
+      allocate (num_states(num_kpts))
+
+      allocate (energy_full(ahc_nbnd_full, num_kpts))
+
+      ! read dsuru_q_cart from ahc file
+      file_unit = io_file_unit()
+      inquire(iolength=recl) dsuru_q_cart(:, :, :, :, 1)
+      open (file_unit, file=trim(ahc_dir) // '/dsuru_mel.bin', &
+        form='unformatted', access='direct', recl=recl, status='old')
+      do ik = 1, num_kpts
+        read (file_unit, rec=ik) dsuru_q_cart(:, :, :, :, ik)
+      enddo
+      close (file_unit)
+
+      ! read vel_q_cart from ahc file
+      file_unit = io_file_unit()
+      inquire(iolength=recl) vel_q_cart(:, :, :, 1)
+      open (file_unit, file=trim(ahc_dir) // '/vel_mel.bin', &
+        form='unformatted', access='direct', recl=recl, status='old')
+      do ik = 1, num_kpts
+        read (file_unit, rec=ik) vel_q_cart(:, :, :, ik)
+      enddo
+      close (file_unit)
+
+      ! read svel_q_cart from ahc file
+      file_unit = io_file_unit()
+      inquire(iolength=recl) svel_q_cart(:, :, :, 1)
+      open (file_unit, file=trim(ahc_dir) // '/svel_mel.bin', &
+        form='unformatted', access='direct', recl=recl, status='old')
+      do ik = 1, num_kpts
+        read (file_unit, rec=ik) svel_q_cart(:, :, :, ik)
+      enddo
+      close (file_unit)
+
+      ! read ahc_etk_iq1 from ahc file (Includes energy of all bands)
+      file_unit = io_file_unit()
+      inquire(iolength=recl) energy_full(:, :)
+      open (file_unit, file=trim(ahc_dir) // '/ahc_etk_iq1.bin', &
+        form='unformatted', access='direct', recl=recl, status='old')
+      read (file_unit, rec=1) energy_full
+      close (file_unit)
+
+      ! Unit conversion: QE is in Rydberg atomic units, W90 is in angstrom, eV.
+      energy_full = energy_full * 0.5_dp / eV_au
+      vel_q_cart = vel_q_cart * bohr_angstrom_internal * 0.5_dp / eV_au
+      svel_q_cart = svel_q_cart * bohr_angstrom_internal * 0.5_dp / eV_au
+      dsuru_q_cart = dsuru_q_cart * bohr_angstrom_internal**2 * 0.5_dp / eV_au
+
+      ! dsuru_q_cart in QE AHC is dsuru_q_cart(m, n) = (numerator) / (e_n - e_m)
+      ! Here, we need dsuru_q_cart(m, n) = (numerator) / (e_m - e_n)
+      ! So, apply -1.
+      dsuru_q_cart = -dsuru_q_cart
+
+      do ik = 1, num_kpts
+        if (have_disentangled) then
+          num_states(ik) = ndimwin(ik)
+        else
+          num_states(ik) = num_wann
+        endif
+      enddo
+
+      do ik = 1, num_kpts
+
+        dsuru_q_cart_add = (0.d0, 0.d0)
+
+        ! qmat = 1 - v_matrix * v_matrix.H
+        call utility_zgemm_new(v_matrix(:, :, ik), v_matrix(:, :, ik), qmat, 'N', 'C')
+        qmat = - qmat
+        do jb = 1, num_bands
+          qmat(jb, jb) = 1.d0 + qmat(jb, jb)
+        enddo
+
+        ! svel_inv_e_q(i, j) = svel_q_cart(i, j, ik) / (eigval(j, ik) - eigval(i, ik))
+        svel_inv_e_q = (0.d0, 0.d0)
+        do jb = 1, num_bands
+          do ib = 1, num_bands
+            if (eigval(ib, ik) <= dis_froz_max .and. eigval(ib, ik) >= dis_froz_min) cycle
+            if (abs(eigval(jb, ik) - eigval(ib, ik)) < 1.d-5) cycle
+            svel_inv_e_q(ib, jb) = svel_q_cart(ahc_nbndskip+ib, jb, idir, ik) / (eigval(jb, ik) - eigval(ib, ik))
+          enddo
+        enddo
+
+        vel_q = (0.d0, 0.d0)
+        do jb = 1, num_bands
+          do ib = 1, num_bands
+            if (eigval(ib, ik) <= dis_froz_max .and. eigval(ib, ik) >= dis_froz_min) cycle
+            vel_q(ib, jb) = vel_q_cart(ahc_nbndskip + ib, jb, jdir, ik)
+          enddo
+        enddo
+
+        ! Add dsuru correction from states inside outer window, outside Wannier subspace
+        ! add svel_inv_e_q.H * qmat * vel_q to dsuru_q_cart_add
+        call utility_zgemmm(svel_inv_e_q, 'C', qmat, 'N', vel_q, 'N', dsuru_q_cart_add)
+
+        ! Add dsuru correction from excluded bands
+        do jb = 1, num_bands
+          do ib = 1, num_bands
+            do i = 1, num_exclude_bands
+              kb = exclude_bands(i)
+              if (abs(energy_full(ahc_nbndskip + ib, ik) - energy_full(kb, ik)) < 1.d-5) cycle
+
+              dsuru_q_cart_add(ib, jb) = dsuru_q_cart_add(ib, jb) &
+                + conjg(svel_q_cart(kb, ib, idir, ik)) * vel_q_cart(kb, jb, jdir, ik) &
+                / (energy_full(ahc_nbndskip + ib, ik) - energy_full(kb, ik))
+            enddo
+          enddo
+        enddo
+
+        ! dsuru_q_cart_add nonzero only for frozen states
+        do ib = 1, num_bands
+          if (eigval(ib, ik) > dis_froz_max .or. eigval(ib, ik) < dis_froz_min) then
+            dsuru_q_cart_add(ib, :) = (0.d0, 0.d0)
+          endif
+        enddo
+
+        dsuru_q_cart(:, :, idir, jdir, ik) = dsuru_q_cart(:, :, idir, jdir, ik) &
+         + dsuru_q_cart_add
+
+      enddo ! ik
+
+      ! ! JML: This corresponds to "both" (i.e. not using outer window for PWF)
+      ! ! dsuru_q_cart nonzero only for frozen states
+      ! do ik = 1, num_kpts
+      !   do ib = 1, num_bands
+      !     if (eigval(ib, ik) > dis_froz_max .or. eigval(ib, ik) < dis_froz_min) then
+      !       dsuru_q_cart(ib, :, :, :, ik) = 0.d0
+      !     endif
+      !   enddo
+      ! enddo
+
+      ! rotate dsuru_q_cart(:, :, 1, 2, :) from eigenbasis to wannier basis
+      ! FIXME: get_win_min
+
+      inquire(iolength=ik) dsuru_q_cart
+      open(666, file='dsuru_q_cart.bin', form='unformatted', access='direct',recl=ik)
+      write(666, rec=1) dsuru_q_cart
+      close(666)
+
+
+      do ik = 1, num_kpts
+
+        call utility_zgemmm(v_matrix(1:num_states(ik), 1:num_wann, ik), 'C', &
+                            dsuru_q_cart(1:num_states(ik), 1:num_states(ik), idir, jdir, ik), 'N', &
+                            v_matrix(1:num_states(ik), 1:num_wann, ik), 'N', &
+                            dsuru_q(:, :, ik))
+      enddo
+
+      inquire(iolength=ik) dsuru_q
+      open(666, file='dsuru_q.bin', form='unformatted', access='direct',recl=ik)
+      write(666, rec=1) dsuru_q
+      close(666)
+
+      call fourier_q_to_R(dsuru_q, dsuru_r_pwf_temp)
+
+      ! Apply degeneracy factor and reorder according to the wigner-seitz vectors
+      call operator_wigner_setup(dsuru_r_pwf_temp, dsuru_r_pwf)
+
+      inquire(iolength=ik) dsuru_r_pwf
+      open(666, file='dsuru_r_pwf.bin', form='unformatted', access='direct',recl=ik)
+      write(666, rec=1) dsuru_r_pwf
+      close(666)
+
+    endif ! on_root
+
+    call comms_bcast(dsuru_r_pwf(1, 1, 1), num_wann*num_wann*nrpts_pw90)
+
+  end subroutine get_dsuru_r_pwf_jml
+
 
   !==================================================
   subroutine get_vel_r_pwf_jml
@@ -2004,12 +2245,16 @@ contains
         enddo ! idir
 
         do idir = 1, 3
-          vel_q(:, :, ik, idir) = vel_q(:, :, ik, idir) &
-            + vel_q_cart(ahc_nbndskip+1:ahc_nbndskip+num_bands, :, idir, ik)
-          if (spinors) then
-            svel_q(:, :, ik, idir) = svel_q(:, :, ik, idir) &
-              + svel_q_cart(ahc_nbndskip+1:ahc_nbndskip+num_bands, :, idir, ik)
-          endif
+          do jb = 1, num_bands
+            do ib = 1, num_bands
+              vel_q(ib, jb, ik, idir) = vel_q(ib, jb, ik, idir) &
+                + vel_q_cart(ahc_nbndskip + ib, jb, idir, ik)
+              if (spinors) then
+                svel_q(ib, jb, ik, idir) = svel_q(ib, jb, ik, idir) &
+                  + svel_q_cart(ahc_nbndskip + ib, jb, idir, ik)
+              endif
+            enddo
+          enddo
         enddo !idir
 
         deallocate(vel_inv_e_q)

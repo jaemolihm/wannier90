@@ -273,6 +273,16 @@ contains
     call comms_bcast(dos_adpt_smr_fac, 1)
     call comms_bcast(num_dos_project, 1)
 
+    call comms_bcast(num_exclude_bands, 1)
+    if (num_exclude_bands > 0) then
+      if (.not. on_root) then
+        allocate (exclude_bands(num_exclude_bands), stat=ierr)
+        if (ierr /= 0) &
+          call io_error('Error in allocating exclude_bands in param_dist')
+      endif
+      call comms_bcast(exclude_bands(1), num_exclude_bands)
+    end if
+
     call comms_bcast(berry, 1)
     call comms_bcast(berry_task, len(berry_task))
     call comms_bcast(berry_kmesh_spacing, 1)

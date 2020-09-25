@@ -71,6 +71,8 @@ module w90_berry
   complex(kind=dp), allocatable :: gen_r_nm_save(:, :, :, :, :, :)
   !! gen_r_nm_save(a, b, n, m, ik) = r_{nm;ik}^{a;b}
 
+  complex(kind=dp), allocatable :: dsuru_save(:, :, :, :)
+
 contains
 
   !===========================================================!
@@ -108,7 +110,8 @@ contains
       shc_bandshift, shc_bandshift_firstband, shc_bandshift_energyshift, &
       use_pwf_jml, spinors
     use w90_get_oper, only: get_HH_R, get_AA_R, get_BB_R, get_CC_R, &
-      get_SS_R, get_SHC_R, get_vel_r_pwf_jml, get_omega_r_pwf_jml
+      get_SS_R, get_SHC_R, get_vel_r_pwf_jml, get_omega_r_pwf_jml, &
+      get_dsuru_r_pwf_jml
 
     real(kind=dp), allocatable    :: adkpt(:, :)
 
@@ -250,16 +253,18 @@ contains
       allocate (sc_list(3, 6, kubo_nfreq))
       sc_k_list = 0.0_dp
       sc_list = 0.0_dp
-      allocate(rmn_save_jml_A(3, num_wann, num_wann, nk))
-      allocate(rmn_save_jml_D(3, num_wann, num_wann, nk))
-      allocate(gen_r_nm_save(8, 3, 3, num_wann, num_wann, nk))
-      rmn_save_jml_A = cmplx_0
-      rmn_save_jml_D = cmplx_0
-      gen_r_nm_save = cmplx_0
-      if (use_pwf_jml) then
-        allocate(rmn_save_pwf_jml(3, num_wann, num_wann, nk))
-        rmn_save_pwf_jml = cmplx_0
-      endif
+!      allocate(rmn_save_jml_A(3, num_wann, num_wann, nk))
+!      allocate(rmn_save_jml_D(3, num_wann, num_wann, nk))
+!      allocate(gen_r_nm_save(8, 3, 3, num_wann, num_wann, nk))
+!      rmn_save_jml_A = cmplx_0
+!      rmn_save_jml_D = cmplx_0
+!      gen_r_nm_save = cmplx_0
+!      if (use_pwf_jml) then
+!        allocate(rmn_save_pwf_jml(3, num_wann, num_wann, nk))
+!        if (spinors) allocate(dsuru_save(num_wann, num_wann, 2, nk))
+!        rmn_save_pwf_jml = cmplx_0
+!        if (spinors) dsuru_save = cmplx_0
+!      endif
     endif
 
     if (eval_shc) then
@@ -288,6 +293,7 @@ contains
     if (use_pwf_jml) then
       call get_vel_r_pwf_jml
       if (spinors) call get_omega_r_pwf_jml
+      if (spinors .and. eval_sc) call get_dsuru_r_pwf_jml
     endif
 
     if (on_root) then
@@ -690,30 +696,37 @@ contains
 
     if (eval_sc) then
       call comms_reduce(sc_list(1, 1, 1), 3*6*kubo_nfreq, 'SUM')
-      call comms_reduce(rmn_save_jml_A(1, 1, 1, 1), 3*num_wann*num_wann*nk, 'SUM')
-      call comms_reduce(rmn_save_jml_D(1, 1, 1, 1), 3*num_wann*num_wann*nk, 'SUM')
-      call comms_reduce(gen_r_nm_save(1, 1, 1, 1, 1, 1), 8*3*3*num_wann*num_wann*nk, 'SUM')
-      if (use_pwf_jml) call comms_reduce(rmn_save_pwf_jml(1, 1, 1, 1), 3*num_wann*num_wann*sum(num_int_kpts_on_node), 'SUM')
-      if (on_root) then
-        inquire(iolength=i) rmn_save_jml_A
-        open(999, file='rmn_save_jml_A.bin', form='unformatted', access='direct', recl=i)
-        write(999, rec=1) rmn_save_jml_A
-        close(999)
-        inquire(iolength=i) rmn_save_jml_D
-        open(999, file='rmn_save_jml_D.bin', form='unformatted', access='direct', recl=i)
-        write(999, rec=1) rmn_save_jml_D
-        close(999)
-        inquire(iolength=i) gen_r_nm_save
-        open(999, file='gen_r_nm_save.bin', form='unformatted', access='direct', recl=i)
-        write(999, rec=1) gen_r_nm_save
-        close(999)
-        if (use_pwf_jml) then
-          inquire(iolength=i) rmn_save_pwf_jml
-          open(999, file='rmn_save_pwf_jml.bin', form='unformatted', access='direct', recl=i)
-          write(999, rec=1) rmn_save_pwf_jml
-          close(999)
-        endif
-      endif
+!      call comms_reduce(rmn_save_jml_A(1, 1, 1, 1), 3*num_wann*num_wann*nk, 'SUM')
+!      call comms_reduce(rmn_save_jml_D(1, 1, 1, 1), 3*num_wann*num_wann*nk, 'SUM')
+!      call comms_reduce(gen_r_nm_save(1, 1, 1, 1, 1, 1), 8*3*3*num_wann*num_wann*nk, 'SUM')
+!      if (spinors) call comms_reduce(dsuru_save(1, 1, 1, 1), num_wann*num_wann*2*nk, 'SUM')
+!      if (use_pwf_jml) call comms_reduce(rmn_save_pwf_jml(1, 1, 1, 1), 3*num_wann*num_wann*sum(num_int_kpts_on_node), 'SUM')
+!      if (on_root) then
+!        inquire(iolength=i) rmn_save_jml_A
+!        open(999, file='rmn_save_jml_A.bin', form='unformatted', access='direct', recl=i)
+!        write(999, rec=1) rmn_save_jml_A
+!        close(999)
+!        inquire(iolength=i) rmn_save_jml_D
+!        open(999, file='rmn_save_jml_D.bin', form='unformatted', access='direct', recl=i)
+!        write(999, rec=1) rmn_save_jml_D
+!        close(999)
+!        inquire(iolength=i) gen_r_nm_save
+!        open(999, file='gen_r_nm_save.bin', form='unformatted', access='direct', recl=i)
+!        write(999, rec=1) gen_r_nm_save
+!        close(999)
+!        if (spinors) then
+!          inquire(iolength=i) dsuru_save
+!          open(999, file='dsuru_save.bin', form='unformatted', access='direct', recl=i)
+!          write(999, rec=1) dsuru_save
+!          close(999)
+!        endif
+!        if (use_pwf_jml) then
+!          inquire(iolength=i) rmn_save_pwf_jml
+!          open(999, file='rmn_save_pwf_jml.bin', form='unformatted', access='direct', recl=i)
+!          write(999, rec=1) rmn_save_pwf_jml
+!          close(999)
+!        endif
+!      endif
     end if
 
     if (eval_shc) then
@@ -1633,19 +1646,20 @@ contains
     ! Arguments
     !
     use w90_constants, only: dp, cmplx_0, cmplx_i
-    use w90_utility, only: utility_re_tr, utility_im_tr, utility_w0gauss, utility_w0gauss_vec
+    use w90_utility, only: utility_re_tr, utility_im_tr, utility_w0gauss, utility_w0gauss_vec, &
+    utility_diagonalize
     use w90_parameters, only: num_wann, kubo_nfreq, kubo_freq_list, fermi_energy_list, &
       kubo_smr_index, berry_kmesh, kubo_adpt_smr_fac, &
       kubo_adpt_smr_max, kubo_adpt_smr, kubo_eigval_max, &
-      kubo_smr_fixed_en_width, sc_phase_conv, sc_w_thr, use_pwf_jml
+      kubo_smr_fixed_en_width, sc_phase_conv, sc_w_thr, use_pwf_jml, spinors
     use w90_postw90_common, only: pw90common_fourier_R_to_k_vec_dadb, &
       pw90common_fourier_R_to_k_new_second_d, pw90common_get_occ, &
       pw90common_kmesh_spacing, pw90common_fourier_R_to_k_vec_dadb_TB_conv, &
-      pw90common_fourier_R_to_k_vec
+      pw90common_fourier_R_to_k_vec, pw90common_fourier_R_to_k_new
     use w90_wan_ham, only: wham_get_eig_UU_HH_JJlist, wham_get_occ_mat_list, wham_get_D_h, &
       wham_get_eig_UU_HH_AA_sc, wham_get_eig_deleig, wham_get_D_h_P_value, &
       wham_get_eig_deleig_TB_conv, wham_get_eig_UU_HH_AA_sc_TB_conv
-    use w90_get_oper, only: AA_R, vel_r_pwf
+    use w90_get_oper, only: AA_R, vel_r_pwf, HH_R
     use w90_utility, only: utility_rotate, utility_zdotu
     ! Arguments
     !
@@ -1664,6 +1678,11 @@ contains
     real(kind=dp), allocatable    :: eig_da(:, :)
     real(kind=dp), allocatable    :: occ(:)
     complex(kind=dp), allocatable :: vel_k(:, :, :)
+
+    ! JML: pwf
+    complex(kind=dp), allocatable :: dsuru_k(:, :)
+    complex(kind=dp), allocatable :: delhh_svel(:, :)
+    complex(kind=dp), allocatable :: delhh_vel(:, :)
 
     complex(kind=dp)              :: sum_AD(3, 3), sum_HD(3, 3), r_mn(3), gen_r_nm(3)
     integer                       :: a, b, c, bc, n, m, istart, iend
@@ -1686,6 +1705,34 @@ contains
     allocate (occ(num_wann))
     allocate (eig_da(num_wann, 3))
     allocate (vel_k(num_wann, num_wann, 3))
+
+    ! JML: pwf
+    allocate (dsuru_k(num_wann, num_wann))
+    allocate (delhh_svel(num_wann, num_wann))
+    allocate (delhh_vel(num_wann, num_wann))
+
+    ! JML PWF
+    if (use_pwf_jml .and. spinors) then
+      call pw90common_fourier_R_to_k_new(kpt, HH_R, OO=HH)
+      call utility_diagonalize(HH, num_wann, eig, UU)
+      call pwf_jml_get_dsuru_k(kpt, UU, dsuru_k, delhh_svel, delhh_vel, 1, 2)
+      ! dsuru_save(:, :, 1, ik): sternheimer term only
+      ! dsuru_save(:, :, 2, ik): sternheimer term + direct (sum-over-bands) term
+
+      dsuru_save(:, :, 1, ik) = dsuru_k(:, :)
+
+      do m = 1, num_wann
+        do n = 1, num_wann
+          do a = 1, num_wann
+            if (abs(eig(m) - eig(a)) < 1.d-4) cycle
+            dsuru_k(m, n) = dsuru_k(m, n) + conjg(delhh_svel(a, m)) * delhh_vel(a, n) / (eig(m) - eig(a))
+          enddo
+        enddo
+      enddo
+
+      dsuru_save(:, :, 2, ik) = dsuru_k(:, :)
+    endif
+    ! END JML PWF
 
     ! Initialize shift current array at point k
     sc_k_list = 0.d0
@@ -1820,17 +1867,17 @@ contains
             I_nm(a, bc) = aimag(r_mn(b)*gen_r_nm(c) + r_mn(c)*gen_r_nm(b))
           enddo ! bc
 
-          gen_r_nm_save(1, :, a, n, m, ik) = gen_r_nm(:)
-          gen_r_nm_save(2, :, a, n, m, ik) = AA_da_bar(n, m, :, a)
-          gen_r_nm_save(3, :, a, n, m, ik) = (AA_bar(n, n, :) - AA_bar(m, m, :))*D_h(n, m, a) &
-                                           + (AA_bar(n, n, a) - AA_bar(m, m, a))*D_h(n, m, :)
-          gen_r_nm_save(4, :, a, n, m, ik) = - cmplx_i*AA_bar(n, m, :)*(AA_bar(n, n, a) - AA_bar(m, m, a))
-          gen_r_nm_save(5, :, a, n, m, ik) = sum_AD(:, a)
-          gen_r_nm_save(6, :, a, n, m, ik) = cmplx_i*HH_dadb_bar(n, m, :, a)/(eig(m) - eig(n))
-          gen_r_nm_save(7, :, a, n, m, ik) = cmplx_i*sum_HD(:, a)/(eig(m) - eig(n))
-          gen_r_nm_save(8, :, a, n, m, ik) = cmplx_i*(D_h(n, m, :)*(eig_da(n, a) - eig_da(m, a)) + &
-                                                      D_h(n, m, a)*(eig_da(n, :) - eig_da(m, :))) &
-                                           /(eig(m) - eig(n))
+!          gen_r_nm_save(1, :, a, n, m, ik) = gen_r_nm(:)
+!          gen_r_nm_save(2, :, a, n, m, ik) = AA_da_bar(n, m, :, a)
+!          gen_r_nm_save(3, :, a, n, m, ik) = (AA_bar(n, n, :) - AA_bar(m, m, :))*D_h(n, m, a) &
+!                                           + (AA_bar(n, n, a) - AA_bar(m, m, a))*D_h(n, m, :)
+!          gen_r_nm_save(4, :, a, n, m, ik) = - cmplx_i*AA_bar(n, m, :)*(AA_bar(n, n, a) - AA_bar(m, m, a))
+!          gen_r_nm_save(5, :, a, n, m, ik) = sum_AD(:, a)
+!          gen_r_nm_save(6, :, a, n, m, ik) = cmplx_i*HH_dadb_bar(n, m, :, a)/(eig(m) - eig(n))
+!          gen_r_nm_save(7, :, a, n, m, ik) = cmplx_i*sum_HD(:, a)/(eig(m) - eig(n))
+!          gen_r_nm_save(8, :, a, n, m, ik) = cmplx_i*(D_h(n, m, :)*(eig_da(n, a) - eig_da(m, a)) + &
+!                                                      D_h(n, m, a)*(eig_da(n, :) - eig_da(m, :))) &
+!                                           /(eig(m) - eig(n))
         enddo ! a
 
         ! compute delta(E_nm-w)
@@ -1854,9 +1901,9 @@ contains
           call DGER(18, iend - istart + 1, occ_fac, I_nm, 1, delta(istart:iend), 1, sc_k_list(:, :, istart:iend), 18)
         endif
 
-        ! save matrix elements to array, written to file after the loop
-        rmn_save_jml_A(:, m, n, ik) = AA_bar(m, n, :)
-        rmn_save_jml_D(:, m, n, ik) = cmplx_i*D_h(m, n, :)
+!        ! save matrix elements to array, written to file after the loop
+!        rmn_save_jml_A(:, m, n, ik) = AA_bar(m, n, :)
+!        rmn_save_jml_D(:, m, n, ik) = cmplx_i*D_h(m, n, :)
 
       enddo ! bands
     enddo ! bands
@@ -1872,7 +1919,7 @@ contains
           ! cycle diagonal matrix elements and bands above the maximum
           if (n == m) cycle
           if (eig(m) > kubo_eigval_max .or. eig(n) > kubo_eigval_max) cycle
-          rmn_save_pwf_jml(:, m, n, ik) = vel_k(m, n, :) / (eig(m) - eig(n)) / cmplx_i
+!          rmn_save_pwf_jml(:, m, n, ik) = vel_k(m, n, :) / (eig(m) - eig(n)) / cmplx_i
         enddo
       enddo
     endif
@@ -1915,6 +1962,42 @@ contains
     call utility_rotate_new(delhh_vel, UU, num_wann)
 
   end subroutine pwf_jml_get_omegak
+
+  subroutine pwf_jml_get_dsuru_k(kpt, UU, dsuru_k, delhh_svel, delhh_vel, alpha, beta)
+    !
+    ! alpha: direction of spin-velocity matrix
+    ! beta: direction of velocity matrix
+    !
+    use w90_parameters, only: num_wann
+    use w90_utility, only : utility_rotate_new
+    use w90_postw90_common, only: pw90common_fourier_R_to_k_new, pw90common_fourier_R_to_k_vec
+    use w90_get_oper, only : dsuru_r_pwf, svel_r_pwf, vel_r_pwf
+
+    implicit none
+
+    ! args
+    real(kind=dp) :: kpt(3)
+    complex(kind=dp) :: UU(num_wann, num_wann)
+    complex(kind=dp) :: dsuru_k(num_wann, num_wann)
+    complex(kind=dp) :: delhh_svel(num_wann, num_wann)
+    complex(kind=dp) :: delhh_vel(num_wann, num_wann)
+    integer, intent(in) :: alpha
+    !! Direction of the spin-velocity matrix
+    integer, intent(in) :: beta
+    !! Direction of the velocity matrix
+
+    integer :: i
+
+    call pw90common_fourier_R_to_k_new(kpt, dsuru_r_pwf, OO=dsuru_k)
+    call utility_rotate_new(dsuru_k, UU, num_wann)
+
+    call pw90common_fourier_R_to_k_new(kpt, svel_r_pwf(:, :, :, alpha), OO=delhh_svel)
+    call utility_rotate_new(delhh_svel, UU, num_wann)
+
+    call pw90common_fourier_R_to_k_new(kpt, vel_r_pwf(:, :, :, beta), OO=delhh_vel)
+    call utility_rotate_new(delhh_vel, UU, num_wann)
+
+  end subroutine pwf_jml_get_dsuru_k
 ! END JML perturbed Wannier functions -----------------------------------
 
   subroutine berry_get_shc_klist(kpt, shc_k_fermi, shc_k_freq, shc_k_band)

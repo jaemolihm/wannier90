@@ -375,6 +375,7 @@ contains
 ! ----------------------------------------------
     call comms_bcast(geninterp, 1)
     call comms_bcast(geninterp_alsofirstder, 1)
+    call comms_bcast(geninterp_alsosecondder, 1)
     call comms_bcast(geninterp_single_file, 1)
     ! [gp-begin, Apr 12, 2012]
     ! BoltzWann variables

@@ -283,6 +283,7 @@ module w90_parameters
   logical, public, save :: geninterp
   logical, public, save :: geninterp_alsofirstder
   logical, public, save :: geninterp_single_file
+  logical, public, save :: geninterp_alsosecondder
   ! [gp-end, Jun 1, 2012]
 
   ! [gp-begin, Apr 12, 2012]
@@ -1768,6 +1769,8 @@ contains
     !%%%%%%%%%%%%%%%%%%%%
     geninterp_alsofirstder = .false.
     call param_get_keyword('geninterp_alsofirstder', found, l_value=geninterp_alsofirstder)
+    geninterp_alsosecondder = .false.
+    call param_get_keyword('geninterp_alsosecondder', found, l_value=geninterp_alsosecondder)
     geninterp_single_file = .true.
     call param_get_keyword('geninterp_single_file', found, l_value=geninterp_single_file)
     ! [gp-end, Jun 1, 2012]
@@ -3422,6 +3425,7 @@ contains
       write (stdout, '(1x,a78)') '*------------------------Generic Band Interpolation--------------------------*'
       write (stdout, '(1x,a46,10x,L8,13x,a1)') '|  Compute Properties at given k-points      :', geninterp, '|'
       write (stdout, '(1x,a46,10x,L8,13x,a1)') '|  Calculate band gradients                  :', geninterp_alsofirstder, '|'
+      write (stdout, '(1x,a46,10x,L8,13x,a1)') '|  Calculate band second derivatives         :', geninterp_alsosecondder, '|'
       write (stdout, '(1x,a46,10x,L8,13x,a1)') '|  Write data into a single file             :', geninterp_single_file, '|'
       write (stdout, '(1x,a78)') '*----------------------------------------------------------------------------*'
     endif
@@ -6262,6 +6266,7 @@ contains
 ! ----------------------------------------------
     call comms_bcast(geninterp, 1)
     call comms_bcast(geninterp_alsofirstder, 1)
+    call comms_bcast(geninterp_alsosecondder, 1)
     call comms_bcast(geninterp_single_file, 1)
     ! [gp-begin, Apr 12, 2012]
     ! BoltzWann variables

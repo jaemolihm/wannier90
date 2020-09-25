@@ -24,13 +24,13 @@ module w90_geninterp
 
   use w90_constants
   use w90_parameters, only: geninterp_alsofirstder, num_wann, recip_lattice, real_lattice, &
-    timing_level, geninterp_single_file
+    timing_level, geninterp_single_file, geninterp_alsosecondder, sc_eta
   use w90_io, only: io_error, stdout, io_stopwatch, io_file_unit, seedname, io_stopwatch
   use w90_get_oper, only: get_HH_R, HH_R
   use w90_comms
-  use w90_utility, only: utility_diagonalize
+  use w90_utility, only: utility_diagonalize, utility_rotate, utility_rotate_diag, utility_matmul_diag
   use w90_postw90_common, only: pw90common_fourier_R_to_k_new
-  use w90_wan_ham, only: wham_get_eig_deleig
+  use w90_wan_ham, only: wham_get_eig_deleig, wham_get_eig_UU_HH_AA_sc, wham_get_D_h_P_value
   use w90_io, only: io_date
   implicit none
 
@@ -54,7 +54,13 @@ contains
     ! I rewrite the comment line on the output
     write (outdat_unit, '(A)') "# Input file comment: "//trim(commentline)
 
-    if (geninterp_alsofirstder) then
+    if (geninterp_alsosecondder) then
+      write (outdat_unit, '(A)') "#  Kpt_idx  K_x (1/ang)       K_y (1/ang)        K_z (1/ang)&
+        &Energy (eV)       EnergyDer_x       EnergyDer_y       EnergyDer_z       &
+        &Energy2Der_xx     Energy2Der_yx     Energy2Der_zx     &
+        &Energy2Der_xy     Energy2Der_yy     Energy2Der_zy     &
+        &Energy2Der_xz     Energy2Der_yz     Energy2Der_zz"
+    elseif (geninterp_alsofirstder) then
       write (outdat_unit, '(A)') "#  Kpt_idx  K_x (1/ang)       K_y (1/ang)        K_z (1/ang)       Energy (eV)"// &
         "      EnergyDer_x       EnergyDer_y       EnergyDer_z"
     else
@@ -70,9 +76,10 @@ contains
     !! But at least if works independently of the number of processors.
     !! I think that a way to write in parallel to the output would help a lot,
     !! so that we don't have to send all eigenvalues to the root node.
-    integer            :: kpt_unit, outdat_unit, num_kpts, ierr, i, j, enidx
+    integer            :: kpt_unit, outdat_unit, num_kpts, ierr, i, j, enidx, iw, a, b
     character(len=500) :: commentline
     character(len=50)  :: cdum
+    real(kind=dp) :: deltaE
     integer, dimension(:), allocatable              :: kpointidx, localkpointidx
     real(kind=dp), dimension(:, :), allocatable      :: kpoints, localkpoints
     complex(kind=dp), dimension(:, :), allocatable   :: HH
@@ -81,10 +88,16 @@ contains
     real(kind=dp), dimension(3)                     :: kpt, frac
     real(kind=dp), dimension(:, :, :), allocatable    :: localdeleig
     real(kind=dp), dimension(:, :, :), allocatable    :: globaldeleig
+    complex(kind=dp), dimension(:, :, :, :), allocatable :: localdel2eig
+    complex(kind=dp), dimension(:, :, :, :), allocatable :: globaldel2eig
     real(kind=dp), dimension(:, :), allocatable      :: localeig
     real(kind=dp), dimension(:, :), allocatable      :: globaleig
     logical                                         :: absoluteCoords
     character(len=200)                              :: outdat_filename
+
+    real(kind=dp), allocatable :: eig(:)
+    complex(kind=dp), allocatable :: HH_da(:, :, :), HH_da_bar(:, :, :), &
+      HH_dadb(:, :, :, :), HH_dadb_bar_diag(:, :, :), D_h(:, :, :)
 
     integer, dimension(0:num_nodes - 1)               :: counts
     integer, dimension(0:num_nodes - 1)               :: displs
@@ -132,6 +145,15 @@ contains
       if (ierr /= 0) call io_error('Error in allocating delHH in calcTDF')
     end if
 
+    if (geninterp_alsosecondder) then
+      allocate (eig(num_wann))
+      allocate (HH_da(num_wann, num_wann, 3))
+      allocate (HH_da_bar(num_wann, num_wann, 3))
+      allocate (HH_dadb(num_wann, num_wann, 3, 3))
+      allocate (HH_dadb_bar_diag(num_wann, 3, 3))
+      allocate (D_h(num_wann, num_wann, 3))
+    endif
+
     ! I call once the routine to calculate the Hamiltonian in real-space <0n|H|Rm>
     call get_HH_R
 
@@ -145,6 +167,10 @@ contains
         if (ierr /= 0) call io_error('Error allocating globaleig in geinterp_main.')
         allocate (globaldeleig(num_wann, 3, num_kpts), stat=ierr)
         if (ierr /= 0) call io_error('Error allocating globaldeleig in geinterp_main.')
+        if (geninterp_alsosecondder) then
+          allocate (globaldel2eig(num_wann, 3, 3, num_kpts), stat=ierr)
+          if (ierr /= 0) call io_error('Error allocating globaldel2eig in geinterp_main.')
+        endif
       end if
     else
       ! On the other nodes, I still allocate them with size 1 to avoid
@@ -158,6 +184,11 @@ contains
         if (ierr /= 0) call io_error('Error allocating globaleig in geinterp_main.')
         allocate (globaldeleig(num_wann, 3, 1), stat=ierr)
         if (ierr /= 0) call io_error('Error allocating globaldeleig in geinterp_main.')
+        if (geninterp_alsosecondder) then
+          allocate (globaldel2eig(num_wann, 3, 3, 1), stat=ierr)
+          if (ierr /= 0) call io_error('Error allocating globaldel2eig in geinterp_main.')
+          globaldel2eig = (0.d0, 0.d0)
+        endif
       end if
     end if
 
@@ -171,6 +202,11 @@ contains
     if (ierr /= 0) call io_error('Error allocating localeig in geinterp_main.')
     allocate (localdeleig(num_wann, 3, max(1, counts(my_node_id))), stat=ierr)
     if (ierr /= 0) call io_error('Error allocating localdeleig in geinterp_main.')
+    if (geninterp_alsosecondder) then
+      allocate (localdel2eig(num_wann, 3, 3, max(1, counts(my_node_id))), stat=ierr)
+      if (ierr /= 0) call io_error('Error allocating localdel2eig in geinterp_main.')
+      localdel2eig = (0.d0, 0.d0)
+    endif
 
     ! On root, I read numpoints_thischunk points
     if (on_root) then
@@ -236,6 +272,34 @@ contains
         call pw90common_fourier_R_to_k_new(kpt, HH_R, OO=HH)
         call utility_diagonalize(HH, num_wann, localeig(:, i), UU)
       end if
+
+      if (geninterp_alsosecondder) then
+        call wham_get_eig_UU_HH_AA_sc(kpt, eig, UU, HH, HH_da, HH_dadb)
+        call wham_get_D_h_P_value(HH_da, UU, eig, D_h)
+
+        ! rotate quantities from W to H gauge (we follow wham_get_D_h for delHH_bar_i)
+        do b = 1, 3
+          ! first derivative of Hamiltonian dH_da
+          HH_da_bar(:, :, b) = utility_rotate(HH_da(:, :, b), UU, num_wann)
+          do a = 1, 3
+            ! second derivative of Hamiltonian d^{2}H_dadb
+            HH_dadb_bar_diag(:, a, b) = utility_rotate_diag(HH_dadb(:, :, a, b), UU, num_wann)
+          enddo
+        enddo
+
+        localdel2eig(:, :, :, i) = HH_dadb_bar_diag
+        do b = 1, 3
+          do a = 1, 3
+            do iw = 1, num_wann
+              localdel2eig(iw, a, b, i) = localdel2eig(iw, a, b, i) &
+                + SUM(CONJG(HH_da_bar(:, iw, a)) * D_h(:, iw, b)) &
+                + SUM(CONJG(D_h(:, iw, b)) * HH_da_bar(:, iw, a))
+            enddo
+          enddo
+        enddo
+
+      endif ! geninterp_alsosecondder
+
     end do
 
     if (geninterp_single_file) then
@@ -246,6 +310,13 @@ contains
       if (geninterp_alsofirstder) then
         call comms_gatherv(localdeleig, 3*num_wann*counts(my_node_id), globaldeleig, &
                            3*num_wann*counts, 3*num_wann*displs)
+      end if
+
+      if (geninterp_alsosecondder) then
+        ! FIXME: add comms_gatherv_real_4 in comms.F90 and set
+        ! localdel2eig and globaldel2eig real-valued.
+        call comms_gatherv(localdel2eig, 3*3*num_wann*counts(my_node_id), globaldel2eig, &
+                           3*3*num_wann*counts, 3*3*num_wann*displs)
       end if
 
       ! Now the printing, only on root node
@@ -259,7 +330,12 @@ contains
           end do
 
           ! I print each line
-          if (geninterp_alsofirstder) then
+          if (geninterp_alsosecondder) then
+            do enidx = 1, num_wann
+              write (outdat_unit, '(I10,16G18.10)') kpointidx(i), frac, &
+                globaleig(enidx, i), globaldeleig(enidx, :, i), REAL(globaldel2eig(enidx, :, :, i))
+            end do
+          elseif (geninterp_alsofirstder) then
             do enidx = 1, num_wann
               write (outdat_unit, '(I10,7G18.10)') kpointidx(i), frac, &
                 globaleig(enidx, i), globaldeleig(enidx, :, i)
@@ -283,7 +359,12 @@ contains
         end do
 
         ! I print each line
-        if (geninterp_alsofirstder) then
+        if (geninterp_alsosecondder) then
+          do enidx = 1, num_wann
+            write (outdat_unit, '(I10,16G18.10)') kpointidx(i), frac, &
+              localeig(enidx, i), localdeleig(enidx, :, i), REAL(localdel2eig(enidx, :, :, i))
+          end do
+        elseif (geninterp_alsofirstder) then
           do enidx = 1, num_wann
             write (outdat_unit, '(I10,7G18.10)') localkpointidx(i), frac, &
               localeig(enidx, i), localdeleig(enidx, :, i)

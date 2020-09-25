@@ -253,18 +253,21 @@ contains
       allocate (sc_list(3, 6, kubo_nfreq))
       sc_k_list = 0.0_dp
       sc_list = 0.0_dp
-!      allocate(rmn_save_jml_A(3, num_wann, num_wann, nk))
-!      allocate(rmn_save_jml_D(3, num_wann, num_wann, nk))
-!      allocate(gen_r_nm_save(8, 3, 3, num_wann, num_wann, nk))
-!      rmn_save_jml_A = cmplx_0
-!      rmn_save_jml_D = cmplx_0
-!      gen_r_nm_save = cmplx_0
-!      if (use_pwf_jml) then
-!        allocate(rmn_save_pwf_jml(3, num_wann, num_wann, nk))
-!        if (spinors) allocate(dsuru_save(num_wann, num_wann, 2, nk))
-!        rmn_save_pwf_jml = cmplx_0
-!        if (spinors) dsuru_save = cmplx_0
-!      endif
+      ! If wanint_kpoint_file, save matrix elements to file
+      if (wanint_kpoint_file) then
+        allocate(rmn_save_jml_A(3, num_wann, num_wann, nk))
+        allocate(rmn_save_jml_D(3, num_wann, num_wann, nk))
+        allocate(gen_r_nm_save(8, 3, 3, num_wann, num_wann, nk))
+        rmn_save_jml_A = cmplx_0
+        rmn_save_jml_D = cmplx_0
+        gen_r_nm_save = cmplx_0
+        if (use_pwf_jml) then
+          allocate(rmn_save_pwf_jml(3, num_wann, num_wann, nk))
+          if (spinors) allocate(dsuru_save(num_wann, num_wann, 2, nk))
+          rmn_save_pwf_jml = cmplx_0
+          if (spinors) dsuru_save = cmplx_0
+        endif
+      endif ! wanint_kpoint_file
     endif
 
     if (eval_shc) then
@@ -696,37 +699,40 @@ contains
 
     if (eval_sc) then
       call comms_reduce(sc_list(1, 1, 1), 3*6*kubo_nfreq, 'SUM')
-!      call comms_reduce(rmn_save_jml_A(1, 1, 1, 1), 3*num_wann*num_wann*nk, 'SUM')
-!      call comms_reduce(rmn_save_jml_D(1, 1, 1, 1), 3*num_wann*num_wann*nk, 'SUM')
-!      call comms_reduce(gen_r_nm_save(1, 1, 1, 1, 1, 1), 8*3*3*num_wann*num_wann*nk, 'SUM')
-!      if (spinors) call comms_reduce(dsuru_save(1, 1, 1, 1), num_wann*num_wann*2*nk, 'SUM')
-!      if (use_pwf_jml) call comms_reduce(rmn_save_pwf_jml(1, 1, 1, 1), 3*num_wann*num_wann*sum(num_int_kpts_on_node), 'SUM')
-!      if (on_root) then
-!        inquire(iolength=i) rmn_save_jml_A
-!        open(999, file='rmn_save_jml_A.bin', form='unformatted', access='direct', recl=i)
-!        write(999, rec=1) rmn_save_jml_A
-!        close(999)
-!        inquire(iolength=i) rmn_save_jml_D
-!        open(999, file='rmn_save_jml_D.bin', form='unformatted', access='direct', recl=i)
-!        write(999, rec=1) rmn_save_jml_D
-!        close(999)
-!        inquire(iolength=i) gen_r_nm_save
-!        open(999, file='gen_r_nm_save.bin', form='unformatted', access='direct', recl=i)
-!        write(999, rec=1) gen_r_nm_save
-!        close(999)
-!        if (spinors) then
-!          inquire(iolength=i) dsuru_save
-!          open(999, file='dsuru_save.bin', form='unformatted', access='direct', recl=i)
-!          write(999, rec=1) dsuru_save
-!          close(999)
-!        endif
-!        if (use_pwf_jml) then
-!          inquire(iolength=i) rmn_save_pwf_jml
-!          open(999, file='rmn_save_pwf_jml.bin', form='unformatted', access='direct', recl=i)
-!          write(999, rec=1) rmn_save_pwf_jml
-!          close(999)
-!        endif
-!      endif
+      if (wanint_kpoint_file) then
+        call comms_reduce(rmn_save_jml_A(1, 1, 1, 1), 3*num_wann*num_wann*nk, 'SUM')
+        call comms_reduce(rmn_save_jml_D(1, 1, 1, 1), 3*num_wann*num_wann*nk, 'SUM')
+        call comms_reduce(gen_r_nm_save(1, 1, 1, 1, 1, 1), 8*3*3*num_wann*num_wann*nk, 'SUM')
+        if (use_pwf_jml .and. spinors) call comms_reduce(dsuru_save(1, 1, 1, 1), num_wann*num_wann*2*nk, 'SUM')
+        if (use_pwf_jml) call comms_reduce(rmn_save_pwf_jml(1, 1, 1, 1), &
+          3*num_wann*num_wann*sum(num_int_kpts_on_node), 'SUM')
+        if (on_root) then
+          inquire(iolength=i) rmn_save_jml_A
+          open(999, file='rmn_save_jml_A.bin', form='unformatted', access='direct', recl=i)
+          write(999, rec=1) rmn_save_jml_A
+          close(999)
+          inquire(iolength=i) rmn_save_jml_D
+          open(999, file='rmn_save_jml_D.bin', form='unformatted', access='direct', recl=i)
+          write(999, rec=1) rmn_save_jml_D
+          close(999)
+          inquire(iolength=i) gen_r_nm_save
+          open(999, file='gen_r_nm_save.bin', form='unformatted', access='direct', recl=i)
+          write(999, rec=1) gen_r_nm_save
+          close(999)
+          if (use_pwf_jml .and. spinors) then
+            inquire(iolength=i) dsuru_save
+            open(999, file='dsuru_save.bin', form='unformatted', access='direct', recl=i)
+            write(999, rec=1) dsuru_save
+            close(999)
+          endif
+          if (use_pwf_jml) then
+            inquire(iolength=i) rmn_save_pwf_jml
+            open(999, file='rmn_save_pwf_jml.bin', form='unformatted', access='direct', recl=i)
+            write(999, rec=1) rmn_save_pwf_jml
+            close(999)
+          endif
+        endif
+      endif ! wanint_kpoint_file
     end if
 
     if (eval_shc) then
@@ -1651,7 +1657,7 @@ contains
     use w90_parameters, only: num_wann, kubo_nfreq, kubo_freq_list, fermi_energy_list, &
       kubo_smr_index, berry_kmesh, kubo_adpt_smr_fac, &
       kubo_adpt_smr_max, kubo_adpt_smr, kubo_eigval_max, &
-      kubo_smr_fixed_en_width, sc_phase_conv, sc_w_thr, use_pwf_jml, spinors
+      kubo_smr_fixed_en_width, sc_phase_conv, sc_w_thr, use_pwf_jml, spinors, wanint_kpoint_file
     use w90_postw90_common, only: pw90common_fourier_R_to_k_vec_dadb, &
       pw90common_fourier_R_to_k_new_second_d, pw90common_get_occ, &
       pw90common_kmesh_spacing, pw90common_fourier_R_to_k_vec_dadb_TB_conv, &
@@ -1867,17 +1873,19 @@ contains
             I_nm(a, bc) = aimag(r_mn(b)*gen_r_nm(c) + r_mn(c)*gen_r_nm(b))
           enddo ! bc
 
-!          gen_r_nm_save(1, :, a, n, m, ik) = gen_r_nm(:)
-!          gen_r_nm_save(2, :, a, n, m, ik) = AA_da_bar(n, m, :, a)
-!          gen_r_nm_save(3, :, a, n, m, ik) = (AA_bar(n, n, :) - AA_bar(m, m, :))*D_h(n, m, a) &
-!                                           + (AA_bar(n, n, a) - AA_bar(m, m, a))*D_h(n, m, :)
-!          gen_r_nm_save(4, :, a, n, m, ik) = - cmplx_i*AA_bar(n, m, :)*(AA_bar(n, n, a) - AA_bar(m, m, a))
-!          gen_r_nm_save(5, :, a, n, m, ik) = sum_AD(:, a)
-!          gen_r_nm_save(6, :, a, n, m, ik) = cmplx_i*HH_dadb_bar(n, m, :, a)/(eig(m) - eig(n))
-!          gen_r_nm_save(7, :, a, n, m, ik) = cmplx_i*sum_HD(:, a)/(eig(m) - eig(n))
-!          gen_r_nm_save(8, :, a, n, m, ik) = cmplx_i*(D_h(n, m, :)*(eig_da(n, a) - eig_da(m, a)) + &
-!                                                      D_h(n, m, a)*(eig_da(n, :) - eig_da(m, :))) &
-!                                           /(eig(m) - eig(n))
+          if (wanint_kpoint_file) then
+            gen_r_nm_save(1, :, a, n, m, ik) = gen_r_nm(:)
+            gen_r_nm_save(2, :, a, n, m, ik) = AA_da_bar(n, m, :, a)
+            gen_r_nm_save(3, :, a, n, m, ik) = (AA_bar(n, n, :) - AA_bar(m, m, :))*D_h(n, m, a) &
+                                             + (AA_bar(n, n, a) - AA_bar(m, m, a))*D_h(n, m, :)
+            gen_r_nm_save(4, :, a, n, m, ik) = - cmplx_i*AA_bar(n, m, :)*(AA_bar(n, n, a) - AA_bar(m, m, a))
+            gen_r_nm_save(5, :, a, n, m, ik) = sum_AD(:, a)
+            gen_r_nm_save(6, :, a, n, m, ik) = cmplx_i*HH_dadb_bar(n, m, :, a)/(eig(m) - eig(n))
+            gen_r_nm_save(7, :, a, n, m, ik) = cmplx_i*sum_HD(:, a)/(eig(m) - eig(n))
+            gen_r_nm_save(8, :, a, n, m, ik) = cmplx_i*(D_h(n, m, :)*(eig_da(n, a) - eig_da(m, a)) + &
+                                                        D_h(n, m, a)*(eig_da(n, :) - eig_da(m, :))) &
+                                             / (eig(m) - eig(n))
+          endif ! wanint_kpoint_file
         enddo ! a
 
         ! compute delta(E_nm-w)
@@ -1919,7 +1927,9 @@ contains
           ! cycle diagonal matrix elements and bands above the maximum
           if (n == m) cycle
           if (eig(m) > kubo_eigval_max .or. eig(n) > kubo_eigval_max) cycle
-!          rmn_save_pwf_jml(:, m, n, ik) = vel_k(m, n, :) / (eig(m) - eig(n)) / cmplx_i
+          if (wanint_kpoint_file) then
+            rmn_save_pwf_jml(:, m, n, ik) = vel_k(m, n, :) / (eig(m) - eig(n)) / cmplx_i
+          endif ! wanint_kpoint_file
         enddo
       enddo
     endif

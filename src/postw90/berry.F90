@@ -70,6 +70,8 @@ module w90_berry
   complex(kind=dp), allocatable :: rmn_save_pwf_jml(:, :, :, :)
   complex(kind=dp), allocatable :: gen_r_nm_save(:, :, :, :, :, :)
   !! gen_r_nm_save(a, b, n, m, ik) = r_{nm;ik}^{a;b}
+  complex(kind=dp), allocatable :: r_nm_save(:, :, :, :)
+  complex(kind=dp), allocatable :: I_nm_save(:, :, :, :, :)
 
   complex(kind=dp), allocatable :: dsuru_save(:, :, :, :)
 
@@ -258,9 +260,13 @@ contains
         allocate(rmn_save_jml_A(3, num_wann, num_wann, nk))
         allocate(rmn_save_jml_D(3, num_wann, num_wann, nk))
         allocate(gen_r_nm_save(8, 3, 3, num_wann, num_wann, nk))
+        allocate(r_nm_save(3, num_wann, num_wann, nk))
+        allocate(I_nm_save(3, 6, num_wann, num_wann, nk))
         rmn_save_jml_A = cmplx_0
         rmn_save_jml_D = cmplx_0
         gen_r_nm_save = cmplx_0
+        r_nm_save = cmplx_0
+        I_nm_save = cmplx_0
         if (use_pwf_jml) then
           allocate(rmn_save_pwf_jml(3, num_wann, num_wann, nk))
           if (spinors) allocate(dsuru_save(num_wann, num_wann, 2, nk))
@@ -703,6 +709,8 @@ contains
         call comms_reduce(rmn_save_jml_A(1, 1, 1, 1), 3*num_wann*num_wann*nk, 'SUM')
         call comms_reduce(rmn_save_jml_D(1, 1, 1, 1), 3*num_wann*num_wann*nk, 'SUM')
         call comms_reduce(gen_r_nm_save(1, 1, 1, 1, 1, 1), 8*3*3*num_wann*num_wann*nk, 'SUM')
+        call comms_reduce(r_nm_save(1, 1, 1, 1), 3*num_wann*num_wann*nk, 'SUM')
+        call comms_reduce(I_nm_save(1, 1, 1, 1, 1), 3*6*num_wann*num_wann*nk, 'SUM')
         if (use_pwf_jml .and. spinors) call comms_reduce(dsuru_save(1, 1, 1, 1), num_wann*num_wann*2*nk, 'SUM')
         if (use_pwf_jml) call comms_reduce(rmn_save_pwf_jml(1, 1, 1, 1), &
           3*num_wann*num_wann*sum(num_int_kpts_on_node), 'SUM')
@@ -718,6 +726,14 @@ contains
           inquire(iolength=i) gen_r_nm_save
           open(999, file='gen_r_nm_save.bin', form='unformatted', access='direct', recl=i)
           write(999, rec=1) gen_r_nm_save
+          close(999)
+          inquire(iolength=i) r_nm_save
+          open(999, file='r_nm_save.bin', form='unformatted', access='direct', recl=i)
+          write(999, rec=1) r_nm_save
+          close(999)
+          inquire(iolength=i) I_nm_save
+          open(999, file='I_nm_save.bin', form='unformatted', access='direct', recl=i)
+          write(999, rec=1) I_nm_save
           close(999)
           if (use_pwf_jml .and. spinors) then
             inquire(iolength=i) dsuru_save
@@ -1874,6 +1890,9 @@ contains
           enddo ! bc
 
           if (wanint_kpoint_file) then
+            r_nm_save(:, m, n, ik) = r_mn(:)
+            I_nm_save(:, :, n, m, ik) = I_nm(:, :)
+
             gen_r_nm_save(1, :, a, n, m, ik) = gen_r_nm(:)
             gen_r_nm_save(2, :, a, n, m, ik) = AA_da_bar(n, m, :, a)
             gen_r_nm_save(3, :, a, n, m, ik) = (AA_bar(n, n, :) - AA_bar(m, m, :))*D_h(n, m, a) &

@@ -301,8 +301,9 @@ contains
 
     if (use_pwf_jml) then
       call get_vel_r_pwf_jml
-      if (spinors) call get_omega_r_pwf_jml
-      if (spinors .and. eval_sc) call get_dsuru_r_pwf_jml
+      ! if (spinors) call get_omega_r_pwf_jml
+      ! if (spinors .and. eval_sc) call get_dsuru_r_pwf_jml(do_spin=.true.)
+      if (spinors .and. eval_sc) call get_dsuru_r_pwf_jml(do_spin=.false.)
     endif
 
     if (on_root) then
@@ -1669,11 +1670,12 @@ contains
     !
     use w90_constants, only: dp, cmplx_0, cmplx_i
     use w90_utility, only: utility_re_tr, utility_im_tr, utility_w0gauss, utility_w0gauss_vec, &
-    utility_diagonalize
+    utility_diagonalize, utility_rotate_new
     use w90_parameters, only: num_wann, kubo_nfreq, kubo_freq_list, fermi_energy_list, &
       kubo_smr_index, berry_kmesh, kubo_adpt_smr_fac, &
       kubo_adpt_smr_max, kubo_adpt_smr, kubo_eigval_max, &
-      kubo_smr_fixed_en_width, sc_phase_conv, sc_w_thr, use_pwf_jml, spinors, wanint_kpoint_file
+      kubo_smr_fixed_en_width, sc_phase_conv, sc_w_thr, use_pwf_jml, spinors, wanint_kpoint_file, &
+      sc_eta
     use w90_postw90_common, only: pw90common_fourier_R_to_k_vec_dadb, &
       pw90common_fourier_R_to_k_new_second_d, pw90common_get_occ, &
       pw90common_kmesh_spacing, pw90common_fourier_R_to_k_vec_dadb_TB_conv, &
@@ -1681,7 +1683,7 @@ contains
     use w90_wan_ham, only: wham_get_eig_UU_HH_JJlist, wham_get_occ_mat_list, wham_get_D_h, &
       wham_get_eig_UU_HH_AA_sc, wham_get_eig_deleig, wham_get_D_h_P_value, &
       wham_get_eig_deleig_TB_conv, wham_get_eig_UU_HH_AA_sc_TB_conv
-    use w90_get_oper, only: AA_R, vel_r_pwf, HH_R
+    use w90_get_oper, only: AA_R, vel_r_pwf, HH_R, dsuru_r_pwf
     use w90_utility, only: utility_rotate, utility_zdotu
     ! Arguments
     !
@@ -1699,15 +1701,16 @@ contains
     real(kind=dp), allocatable    :: eig(:)
     real(kind=dp), allocatable    :: eig_da(:, :)
     real(kind=dp), allocatable    :: occ(:)
-    complex(kind=dp), allocatable :: vel_k(:, :, :)
 
     ! JML: pwf
+    complex(kind=dp), allocatable :: duru_k(:, :, :, :)
+    complex(kind=dp), allocatable :: vel_k(:, :, :)
     complex(kind=dp), allocatable :: dsuru_k(:, :)
     complex(kind=dp), allocatable :: delhh_svel(:, :)
     complex(kind=dp), allocatable :: delhh_vel(:, :)
 
     complex(kind=dp)              :: sum_AD(3, 3), sum_HD(3, 3), r_mn(3), gen_r_nm(3)
-    integer                       :: a, b, c, bc, n, m, istart, iend
+    integer                       :: a, b, c, bc, n, m, istart, iend, alpha, beta
     real(kind=dp)                 :: I_nm(3, 6), &
                                      omega(kubo_nfreq), delta(kubo_nfreq), joint_level_spacing, &
                                      eta_smr, Delta_k, vdum(3), occ_fac, wstep, wmin, wmax
@@ -1729,32 +1732,36 @@ contains
     allocate (vel_k(num_wann, num_wann, 3))
 
     ! JML: pwf
-    allocate (dsuru_k(num_wann, num_wann))
+    allocate (duru_k(num_wann, num_wann, 3, 3))
     allocate (delhh_svel(num_wann, num_wann))
     allocate (delhh_vel(num_wann, num_wann))
 
-    ! JML PWF
-    if (use_pwf_jml .and. spinors) then
-      call pw90common_fourier_R_to_k_new(kpt, HH_R, OO=HH)
-      call utility_diagonalize(HH, num_wann, eig, UU)
-      call pwf_jml_get_dsuru_k(kpt, UU, dsuru_k, delhh_svel, delhh_vel, 1, 2)
-      ! dsuru_save(:, :, 1, ik): sternheimer term only
-      ! dsuru_save(:, :, 2, ik): sternheimer term + direct (sum-over-bands) term
+    ! ! JML PWF spin shift current
+    ! if (use_pwf_jml .and. spinors .and. wanint_kpoint_file) then
+    !   allocate (dsuru_k(num_wann, num_wann))
 
-      dsuru_save(:, :, 1, ik) = dsuru_k(:, :)
+    !   call pw90common_fourier_R_to_k_new(kpt, HH_R, OO=HH)
+    !   call utility_diagonalize(HH, num_wann, eig, UU)
+    !   call pwf_jml_get_dsuru_k(kpt, UU, dsuru_k, delhh_svel, delhh_vel, 1, 2)
+    !   ! dsuru_save(:, :, 1, ik): sternheimer term only
+    !   ! dsuru_save(:, :, 2, ik): sternheimer term + direct (sum-over-bands) term
 
-      do m = 1, num_wann
-        do n = 1, num_wann
-          do a = 1, num_wann
-            if (abs(eig(m) - eig(a)) < 1.d-4) cycle
-            dsuru_k(m, n) = dsuru_k(m, n) + conjg(delhh_svel(a, m)) * delhh_vel(a, n) / (eig(m) - eig(a))
-          enddo
-        enddo
-      enddo
+    !   dsuru_save(:, :, 1, ik) = dsuru_k(:, :)
 
-      dsuru_save(:, :, 2, ik) = dsuru_k(:, :)
-    endif
-    ! END JML PWF
+    !   do m = 1, num_wann
+    !     do n = 1, num_wann
+    !       do a = 1, num_wann
+    !         if (abs(eig(m) - eig(a)) < 1.d-4) cycle
+    !         dsuru_k(m, n) = dsuru_k(m, n) + conjg(delhh_svel(a, m)) * delhh_vel(a, n) / (eig(m) - eig(a))
+    !       enddo
+    !     enddo
+    !   enddo
+
+    !   dsuru_save(:, :, 2, ik) = dsuru_k(:, :)
+
+    !   deallocate(dsuru_k)
+    ! endif
+    ! ! END JML PWF spin shift current
 
     ! Initialize shift current array at point k
     sc_k_list = 0.d0
@@ -1801,6 +1808,42 @@ contains
         HH_dadb_bar(:, :, a, b) = utility_rotate(HH_dadb(:, :, a, b), UU, num_wann)
       enddo
     enddo
+
+    ! ===================================================================
+    ! BEGIN JML PWF for shift current
+    if (use_pwf_jml) then
+
+      do beta = 1, 3
+        call pw90common_fourier_R_to_k_vec(kpt, dsuru_r_pwf(:, :, :, :, beta), OO_true=duru_k(:, :, :, beta))
+        do alpha = 1, 3
+          call utility_rotate_new(duru_k(:, :, alpha, beta), UU, num_wann)
+        enddo
+      enddo
+
+
+      call pw90common_fourier_R_to_k_vec(kpt, vel_r_pwf, OO_true=vel_k)
+      do alpha = 1, 3
+        call utility_rotate_new(vel_k(:, :, alpha), UU, num_wann)
+      enddo
+
+      do beta = 1, 3
+        do alpha = 1, 3
+          do n = 1, num_wann
+            do m = 1, num_wann
+              do a = 1, num_wann
+                if (m == a) cycle
+                duru_k(m, n, alpha, beta) = duru_k(m, n, alpha, beta) &
+                  + conjg(vel_k(a, m, alpha)) * vel_k(a, n, beta) &
+                  * (eig(m) - eig(a)) / (sc_eta**2 + (eig(m) - eig(a))**2)
+              enddo ! a
+            enddo ! m
+          enddo ! n
+        enddo ! alpha
+      enddo ! beta
+
+    endif
+    ! END JML PWF for shift current
+    ! ===================================================================
 
     ! setup for frequency-related quantities
     omega = real(kubo_freq_list(:), dp)
@@ -1879,6 +1922,18 @@ contains
                                     + (D_h(n, m, :)*(eig_da(n, a) - eig_da(m, a)) + &
                                        D_h(n, m, a)*(eig_da(n, :) - eig_da(m, :)))) &
                          /(eig(m) - eig(n)))
+
+          ! ===================================================================
+          ! BEGIN JML PWF for shift current
+          if (use_pwf_jml) then
+
+            gen_r_nm(:) = - (duru_k(n, m, a, :) + CONJG(duru_k(m, n, a, :)))
+            gen_r_nm(:) = gen_r_nm(:) + vel_k(n, m, :) * (vel_k(n, n, a) - vel_k(m, m, a)) / (eig(n) - eig(m))
+            gen_r_nm(:) = gen_r_nm(:) * cmplx_i / (eig(n) - eig(m))
+
+          endif
+          ! END JML PWF for shift current
+          ! ===================================================================
 
           ! loop over the remaining two indexes of the matrix product.
           ! Note that shift current is symmetric under b <--> c exchange,
@@ -2005,8 +2060,8 @@ contains
     implicit none
 
     ! args
-    real(kind=dp) :: kpt(3)
-    complex(kind=dp) :: UU(num_wann, num_wann)
+    real(kind=dp), intent(in) :: kpt(3)
+    complex(kind=dp), intent(in) :: UU(num_wann, num_wann)
     complex(kind=dp) :: dsuru_k(num_wann, num_wann)
     complex(kind=dp) :: delhh_svel(num_wann, num_wann)
     complex(kind=dp) :: delhh_vel(num_wann, num_wann)
@@ -2017,7 +2072,7 @@ contains
 
     integer :: i
 
-    call pw90common_fourier_R_to_k_new(kpt, dsuru_r_pwf, OO=dsuru_k)
+    call pw90common_fourier_R_to_k_new(kpt, dsuru_r_pwf(:, :, :, alpha, beta), OO=dsuru_k)
     call utility_rotate_new(dsuru_k, UU, num_wann)
 
     call pw90common_fourier_R_to_k_new(kpt, svel_r_pwf(:, :, :, alpha), OO=delhh_svel)

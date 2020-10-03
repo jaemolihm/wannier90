@@ -1036,8 +1036,6 @@ contains
         open (unit=file_unit, file=wfnname, form='unformatted')
         read (file_unit) ix, iy, iz, ik, nbnd
       end if
-      write(stdout, '(1x, a, a)') 'Reading ', TRIM(wfnname)
-      FLUSH(stdout)
 
       if ((ix /= ngx) .or. (iy /= ngy) .or. (iz /= ngz) .or. (ik /= loop_kpt)) then
         write (stdout, '(1x,a,a)') 'WARNING: mismatch in file', trim(wfnname)
@@ -1733,6 +1731,10 @@ contains
     !                                            !
     !! Plot the WF in Xcrysden format
     !! based on code written by Michel Posternak
+    !!
+    !! WARNING
+    !! - exclude_bands is not implemented. To exclude some
+    !!   bands, use the outer window.
     !                                            !
     !============================================!
 
@@ -1744,23 +1746,27 @@ contains
       atoms_symbol, atoms_pos_cart, num_atoms, real_lattice, have_disentangled, &
       ndimwin, lwindow, u_matrix_opt, num_wannier_plot, wannier_plot_list, &
       wannier_plot_mode, wvfn_formatted, timing_level, wannier_plot_format, &
-      spinors, wannier_plot_spinor_mode, wannier_plot_spinor_phase
-    use w90_parameters, only : ahc_dir
+      spinors, wannier_plot_spinor_mode, wannier_plot_spinor_phase, &
+      wannier_centres
+    use w90_parameters, only : ahc_dir, ahc_nbndskip, eigval, ahc_nbnd_full, &
+      dis_froz_min, dis_froz_max
+    use w90_constants, only : bohr_angstrom_internal, eV_au
+    use w90_utility, only : utility_zgemm_new
 
     implicit none
 
     real(kind=dp) :: scalfac, tmax, tmaxx, x_0ang, y_0ang, z_0ang
     real(kind=dp) :: fxcry(3), dirl(3, 3), w_real, w_imag, ratmax, ratio
-    real(kind=dp) :: upspinor, dnspinor, upphase, dnphase
-    complex(kind=dp), allocatable :: wann_func(:, :, :, :)
-    complex(kind=dp), allocatable :: r_wvfn(:, :)
-    complex(kind=dp), allocatable :: r_wvfn_tmp(:, :)
-    complex(kind=dp), allocatable :: wann_func_nc(:, :, :, :, :) ! add the spinor dim.
-    complex(kind=dp), allocatable :: r_wvfn_nc(:, :, :) ! add the spinor dim.
-    complex(kind=dp), allocatable :: r_wvfn_tmp_nc(:, :, :) ! add the spinor dim.
+    real(kind=dp), allocatable :: upspinor(:, :, :), dnspinor(:, :, :), upphase(:, :, :), dnphase(:, :, :)
+    complex(kind=dp), allocatable :: wann_func(:, :, :, :, :)
+    complex(kind=dp), allocatable :: wann_func_plot(:, :, :, :)
+    complex(kind=dp), allocatable :: r_wvfn(:, :, :)
+    complex(kind=dp), allocatable :: r_wvfn_tmp(:, :, :)
+    complex(kind=dp), allocatable :: r_wvfn_dpsi_tmp(:, :, :)
     complex(kind=dp) :: catmp, wmod
 
     logical :: have_file
+    integer :: nspin, ispin, max_nun_inc
     integer :: i, j, nsp, nat, nbnd, counter, ierr, idir
     integer :: loop_kpt, ik, ix, iy, iz, nk, ngx, ngy, ngz, nxx, nyy, nzz
     integer :: loop_b, nx, ny, nz, npoint, file_unit, loop_w, num_inc
@@ -1770,11 +1776,23 @@ contains
     character(len=60) :: wanxsf, wancube
     character(len=9)  :: cdate, ctime
     logical           :: inc_band(num_bands)
+
+    integer :: recl, m, ib, jb
+    complex(dp), allocatable :: v_matrix(:, :), vel_q_cart(:, :, :, :), qmat(:, :), &
+      vel_inv_e_q(:, :), qmat_velinv(:, :)
+
+    logical :: jml_plot_r_times_wf = .false.
     !
 200 format('UNK', i5.5, '.', i1)
 199 format('UNK', i5.5, '.', 'NC')
 
     if (timing_level > 1) call io_stopwatch('plot: wannier', 1)
+    !
+    if (spinors) then
+      nspin = 2
+    else
+      nspin = 1
+    endif
     !
     if (.not. spinors) then
       write (wfnname, 200) 1, spin
@@ -1783,6 +1801,18 @@ contains
     endif
     inquire (file=wfnname, exist=have_file)
     if (.not. have_file) call io_error('plot_wannier: file '//wfnname//' not found')
+
+    ! read vel_q_cart from ahc file
+    allocate (vel_q_cart(ahc_nbnd_full, num_bands, 3, num_kpts))
+    file_unit = io_file_unit()
+    inquire(iolength=recl) vel_q_cart(:, :, :, 1)
+    open (file_unit, file=trim(ahc_dir) // '/vel_mel.bin', &
+      form='unformatted', access='direct', recl=recl, status='old')
+    do ik = 1, num_kpts
+      read (file_unit, rec=ik) vel_q_cart(:, :, :, ik)
+    enddo
+    close (file_unit)
+    vel_q_cart = vel_q_cart * bohr_angstrom_internal * 0.5_dp / eV_au
 
     file_unit = io_file_unit()
     if (wvfn_formatted) then
@@ -1796,38 +1826,95 @@ contains
 
     allocate (wann_func(-((ngs(1))/2)*ngx:((ngs(1) + 1)/2)*ngx - 1, &
                         -((ngs(2))/2)*ngy:((ngs(2) + 1)/2)*ngy - 1, &
-                        -((ngs(3))/2)*ngz:((ngs(3) + 1)/2)*ngz - 1, num_wannier_plot), stat=ierr)
+                        -((ngs(3))/2)*ngz:((ngs(3) + 1)/2)*ngz - 1, nspin, num_wannier_plot), stat=ierr)
     if (ierr /= 0) call io_error('Error in allocating wann_func in plot_wannier')
-    wann_func = cmplx_0
+    allocate (wann_func_plot(-((ngs(1))/2)*ngx:((ngs(1) + 1)/2)*ngx - 1, &
+                        -((ngs(2))/2)*ngy:((ngs(2) + 1)/2)*ngy - 1, &
+                        -((ngs(3))/2)*ngz:((ngs(3) + 1)/2)*ngz - 1, num_wannier_plot), stat=ierr)
+    if (ierr /= 0) call io_error('Error in allocating wann_func_plot in plot_wannier')
+
     if (spinors) then
-      allocate (wann_func_nc(-((ngs(1))/2)*ngx:((ngs(1) + 1)/2)*ngx - 1, &
-                             -((ngs(2))/2)*ngy:((ngs(2) + 1)/2)*ngy - 1, &
-                             -((ngs(3))/2)*ngz:((ngs(3) + 1)/2)*ngz - 1, 2, num_wannier_plot), stat=ierr)
-      if (ierr /= 0) call io_error('Error in allocating wann_func_nc in plot_wannier')
-      wann_func_nc = cmplx_0
+      allocate (upspinor(-((ngs(1))/2)*ngx:((ngs(1) + 1)/2)*ngx - 1, &
+                          -((ngs(2))/2)*ngy:((ngs(2) + 1)/2)*ngy - 1, &
+                          -((ngs(3))/2)*ngz:((ngs(3) + 1)/2)*ngz - 1), stat=ierr)
+      if (ierr /= 0) call io_error('Error in allocating upspinor in plot_wannier')
+      allocate (dnspinor(-((ngs(1))/2)*ngx:((ngs(1) + 1)/2)*ngx - 1, &
+                          -((ngs(2))/2)*ngy:((ngs(2) + 1)/2)*ngy - 1, &
+                          -((ngs(3))/2)*ngz:((ngs(3) + 1)/2)*ngz - 1), stat=ierr)
+      if (ierr /= 0) call io_error('Error in allocating dnspinor in plot_wannier')
+      allocate (upphase(-((ngs(1))/2)*ngx:((ngs(1) + 1)/2)*ngx - 1, &
+                          -((ngs(2))/2)*ngy:((ngs(2) + 1)/2)*ngy - 1, &
+                          -((ngs(3))/2)*ngz:((ngs(3) + 1)/2)*ngz - 1), stat=ierr)
+      if (ierr /= 0) call io_error('Error in allocating upphase in plot_wannier')
+      allocate (dnphase(-((ngs(1))/2)*ngx:((ngs(1) + 1)/2)*ngx - 1, &
+                          -((ngs(2))/2)*ngy:((ngs(2) + 1)/2)*ngy - 1, &
+                          -((ngs(3))/2)*ngz:((ngs(3) + 1)/2)*ngz - 1), stat=ierr)
+      if (ierr /= 0) call io_error('Error in allocating dnphase in plot_wannier')
     endif
-    if (.not. spinors) then
-      if (have_disentangled) then
-        allocate (r_wvfn_tmp(ngx*ngy*ngz, maxval(ndimwin)), stat=ierr)
-        if (ierr /= 0) call io_error('Error in allocating r_wvfn_tmp in plot_wannier')
-      end if
-      allocate (r_wvfn(ngx*ngy*ngz, num_wann), stat=ierr)
-      if (ierr /= 0) call io_error('Error in allocating r_wvfn in plot_wannier')
+
+    if (have_disentangled) then
+      max_nun_inc = maxval(ndimwin)
     else
-      if (have_disentangled) then
-        allocate (r_wvfn_tmp_nc(ngx*ngy*ngz, maxval(ndimwin), 2), stat=ierr)
-        if (ierr /= 0) call io_error('Error in allocating r_wvfn_tmp_nc in plot_wannier')
-      end if
-      allocate (r_wvfn_nc(ngx*ngy*ngz, num_wann, 2), stat=ierr)
-      if (ierr /= 0) call io_error('Error in allocating r_wvfn_nc in plot_wannier')
+      max_nun_inc = num_bands
     endif
+    max_nun_inc = num_bands
+
+    allocate (r_wvfn(ngx*ngy*ngz, num_wann, nspin), stat=ierr)
+    if (ierr /= 0) call io_error('Error in allocating r_wvfn in plot_wannier')
+    allocate (r_wvfn_tmp(ngx*ngy*ngz, max_nun_inc, nspin), stat=ierr)
+    if (ierr /= 0) call io_error('Error in allocating r_wvfn_tmp in plot_wannier')
+    allocate (r_wvfn_dpsi_tmp(ngx*ngy*ngz, max_nun_inc, nspin), stat=ierr)
+    if (ierr /= 0) call io_error('Error in allocating r_wvfn_dpsi in plot_wannier')
+    wann_func = cmplx_0
+    r_wvfn = cmplx_0
+    r_wvfn_tmp = cmplx_0
+    r_wvfn_dpsi_tmp = cmplx_0
+
+    allocate (v_matrix(num_bands, num_wann), stat=ierr)
+    allocate (qmat(num_bands, num_bands), stat=ierr)
+    allocate (qmat_velinv(num_bands, num_bands), stat=ierr)
+    allocate (vel_inv_e_q(num_bands, num_bands), stat=ierr)
 
     call io_date(cdate, ctime)
     do idir = 1, 3
       wann_func = cmplx_0
-      if (spinors) wann_func_nc = cmplx_0
 
       do loop_kpt = 1, num_kpts
+
+        if (.not. have_disentangled) then
+          v_matrix = u_matrix(:, :, loop_kpt)
+        else
+          v_matrix = cmplx_0
+          do j = 1, num_wann
+            do m = 1, ndimwin(loop_kpt)
+              do i = 1, num_wann
+                v_matrix(m, j) = v_matrix(m, j) &
+                               + u_matrix_opt(m, i, loop_kpt)*u_matrix(i, j, loop_kpt)
+              enddo
+            enddo
+          enddo
+        endif
+
+        ! FIXME: excluded states
+        ! FIXME: states outside the outer window
+        ! Currently, I assumed all nscf bands are included in the outer window.
+
+        ! qmat = 1 - v_matrix * v_matrix.H
+        call utility_zgemm_new(v_matrix, v_matrix, qmat, 'N', 'C')
+        qmat = - qmat
+        do jb = 1, num_bands
+          qmat(jb, jb) = 1.d0 + qmat(jb, jb)
+        enddo
+
+        ! vel_inv_e_q(i, j) = vel_q_cart(i, j, ik) / (eigval(j, ik) - eigval(i, ik))
+        vel_inv_e_q = cmplx_0
+        do jb = 1, num_bands
+          do ib = 1, num_bands
+            if (abs(eigval(jb, loop_kpt) - eigval(ib, loop_kpt)) < 1.d-5) cycle
+            vel_inv_e_q(ib, jb) = vel_q_cart(ahc_nbndskip+ib, jb, idir, loop_kpt) &
+                                / (eigval(jb, loop_kpt) - eigval(ib, loop_kpt))
+          enddo
+        enddo
 
         inc_band = .true.
         num_inc = num_wann
@@ -1836,66 +1923,75 @@ contains
           num_inc = ndimwin(loop_kpt)
         end if
 
-        write (wfnname_dhx, '("UNK_dhxpsi", i5.5, ".idir", i1, ".dat")') loop_kpt, idir
-        file_unit = io_file_unit()
-        write(stdout, '(1x, a, a)') 'Reading ', TRIM(wfnname_dhx)
-        FLUSH(stdout)
-        open (unit=file_unit, file=trim(ahc_dir)//'/unk_dir/'//trim(wfnname_dhx), form='unformatted')
-        read (file_unit) ix, iy, iz, ik, nbnd
-
-        if ((ix /= ngx) .or. (iy /= ngy) .or. (iz /= ngz) .or. (ik /= loop_kpt)) then
-          write (stdout, '(1x,a,a)') 'WARNING: mismatch in file', trim(wfnname_dhx)
-          write (stdout, '(1x,5(a6,I5))') '   ix=', ix, '   iy=', iy, '   iz=', iz, '   ik=', ik, ' nbnd=', nbnd
-          write (stdout, '(1x,5(a6,I5))') '  ngx=', ngx, '  ngy=', ngy, '  ngz=', ngz, '  kpt=', loop_kpt, 'bands=', num_bands
-          call io_error('plot_wannier')
-        end if
-
-        if (have_disentangled) then
-          counter = 1
-          do loop_b = 1, num_bands
-            if (counter > num_inc) exit
-            if (.not. spinors) then
-              read (file_unit) (r_wvfn_tmp(nx, counter), nx=1, ngx*ngy*ngz)
-            else
-              read (file_unit) (r_wvfn_tmp_nc(nx, counter, 1), nx=1, ngx*ngy*ngz) ! up-spinor
-              read (file_unit) (r_wvfn_tmp_nc(nx, counter, 2), nx=1, ngx*ngy*ngz) ! down-spinor
-            endif
-            if (inc_band(loop_b)) counter = counter + 1
-          end do
+        if (.not. spinors) then
+          write (wfnname, 200) loop_kpt, spin
         else
-          do loop_b = 1, num_bands
-            if (.not. spinors) then
-              read (file_unit) (r_wvfn(nx, loop_b), nx=1, ngx*ngy*ngz)
-            else
-              read (file_unit) (r_wvfn_nc(nx, loop_b, 1), nx=1, ngx*ngy*ngz) ! up-spinor
-              read (file_unit) (r_wvfn_nc(nx, loop_b, 2), nx=1, ngx*ngy*ngz) ! down-spinor
-            endif
-          end do
-        end if
+          write (wfnname, 199) loop_kpt
+        endif
 
-        close (file_unit)
+        write (wfnname_dhx, '("UNK_dhxpsi", i5.5, ".idir", i1, ".dat")') loop_kpt, idir
+        wfnname_dhx = trim(ahc_dir) // '/unk_dir/' // trim(wfnname_dhx)
+
+        CALL read_unk_file(wfnname, ngx, ngy, ngz, loop_kpt, r_wvfn_tmp)
+        CALL read_unk_file(wfnname_dhx, ngx, ngy, ngz, loop_kpt, r_wvfn_dpsi_tmp)
+
+        ! Multiply i because r_wvfn_dpsi_tmp is solution of
+        ! (H-e) dpsi = [H, x] |psi> = -i (dH/dk) |psi>
+        r_wvfn_dpsi_tmp = -cmplx_i * r_wvfn_dpsi_tmp * bohr_angstrom_internal
+
+        ! qmat_velinv = qmat * vel_inv_e_q
+        call utility_zgemm_new(qmat, vel_inv_e_q, qmat_velinv, 'N', 'N')
+        do ib = 1, num_bands
+
+          do jb = 1, num_bands
+            ! jb: only frozen states
+            if (eigval(jb, loop_kpt) > dis_froz_max .or. eigval(jb, loop_kpt) < dis_froz_min) cycle
+
+            do ispin = 1, nspin
+              r_wvfn_dpsi_tmp(:, jb, ispin) = r_wvfn_dpsi_tmp(:, jb, ispin) &
+                + r_wvfn_tmp(:, ib, ispin) * qmat_velinv(ib, jb)
+            enddo ! ispin
+          enddo ! jb
+        enddo ! ib
 
         if (have_disentangled) then
-          if (.not. spinors) then
+          r_wvfn = cmplx_0
+          do loop_w = 1, num_wann
+            counter = 0
+            do loop_b = 1, num_bands
+              if (.NOT. inc_band(loop_b)) cycle
+              counter = counter + 1
+              do ispin = 1, nspin
+                r_wvfn(:, loop_w, ispin) = r_wvfn(:, loop_w, ispin) &
+                                    + u_matrix_opt(counter, loop_w, loop_kpt) &
+                                    * r_wvfn_dpsi_tmp(:, loop_b, ispin)
+              enddo ! ispin
+            end do ! loop_b
+          end do ! loop_w
+        else
+          r_wvfn = r_wvfn_dpsi_tmp
+        end if ! have_disentangled
+
+
+        if (jml_plot_r_times_wf) then
+          if (have_disentangled) then
             r_wvfn = cmplx_0
             do loop_w = 1, num_wann
-              do loop_b = 1, num_inc
-                r_wvfn(:, loop_w) = r_wvfn(:, loop_w) + &
-                                    u_matrix_opt(loop_b, loop_w, loop_kpt)*r_wvfn_tmp(:, loop_b)
-              end do
-            end do
+              counter = 0
+              do loop_b = 1, num_bands
+                if (.NOT. inc_band(loop_b)) cycle
+                counter = counter + 1
+                do ispin = 1, nspin
+                  r_wvfn(:, loop_w, ispin) = r_wvfn(:, loop_w, ispin) &
+                                      + u_matrix_opt(counter, loop_w, loop_kpt) &
+                                      * r_wvfn_tmp(:, loop_b, ispin)
+                enddo ! ispin
+              end do ! loop_b
+            end do ! loop_w
           else
-            r_wvfn_nc = cmplx_0
-            do loop_w = 1, num_wann
-              do loop_b = 1, num_inc
-                call zaxpy(ngx*ngy*ngz, u_matrix_opt(loop_b, loop_w, loop_kpt), r_wvfn_tmp_nc(1, loop_b, 1), 1, & ! up-spinor
-                           r_wvfn_nc(1, loop_w, 1), 1)
-                call zaxpy(ngx*ngy*ngz, u_matrix_opt(loop_b, loop_w, loop_kpt), r_wvfn_tmp_nc(1, loop_b, 2), 1, & ! down-spinor
-                           r_wvfn_nc(1, loop_w, 2), 1)
-              end do
-            end do
-          endif
-        end if
+            r_wvfn = r_wvfn_tmp
+          end if ! have_disentangled
+        endif ! jml_plot_r_times_wf
 
         ! nxx, nyy, nzz span a parallelogram in the real space mesh, of side
         ! 2*nphir, and centered around the maximum of phi_i, nphimx(i, 1 2 3)
@@ -1922,51 +2018,80 @@ contains
                         kpt_latt(3, loop_kpt)*real(nzz - 1, dp)/real(ngz, dp)
               npoint = nx + (ny - 1)*ngx + (nz - 1)*ngy*ngx
               catmp = exp(twopi*cmplx_i*scalfac)
+
               do loop_b = 1, num_wann
                 do loop_w = 1, num_wannier_plot
-                  if (.not. spinors) then
-                    wann_func(nxx, nyy, nzz, loop_w) = &
-                      wann_func(nxx, nyy, nzz, loop_w) + &
-                      u_matrix(loop_b, wannier_plot_list(loop_w), loop_kpt)*r_wvfn(npoint, loop_b)*catmp
-                  else
-                    wann_func_nc(nxx, nyy, nzz, 1, loop_w) = &
-                      wann_func_nc(nxx, nyy, nzz, 1, loop_w) + & ! up-spinor
-                      u_matrix(loop_b, wannier_plot_list(loop_w), loop_kpt)*r_wvfn_nc(npoint, loop_b, 1)*catmp
-                    wann_func_nc(nxx, nyy, nzz, 2, loop_w) = &
-                      wann_func_nc(nxx, nyy, nzz, 2, loop_w) + & ! down-spinor
-                      u_matrix(loop_b, wannier_plot_list(loop_w), loop_kpt)*r_wvfn_nc(npoint, loop_b, 2)*catmp
-                    if (loop_b == num_wann) then ! last loop
-                      upspinor = real(wann_func_nc(nxx, nyy, nzz, 1, loop_w)* &
-                                      conjg(wann_func_nc(nxx, nyy, nzz, 1, loop_w)), dp)
-                      dnspinor = real(wann_func_nc(nxx, nyy, nzz, 2, loop_w)* &
-                                      conjg(wann_func_nc(nxx, nyy, nzz, 2, loop_w)), dp)
-                      if (wannier_plot_spinor_phase) then
-                        upphase = sign(1.0_dp, real(wann_func_nc(nxx, nyy, nzz, 1, loop_w), dp))
-                        dnphase = sign(1.0_dp, real(wann_func_nc(nxx, nyy, nzz, 2, loop_w), dp))
-                      else
-                        upphase = 1.0_dp; dnphase = 1.0_dp
-                      endif
-                      select case (wannier_plot_spinor_mode)
-                      case ('total')
-                        wann_func(nxx, nyy, nzz, loop_w) = cmplx(sqrt(upspinor + dnspinor), 0.0_dp, dp)
-                      case ('up')
-                        wann_func(nxx, nyy, nzz, loop_w) = cmplx(sqrt(upspinor), 0.0_dp, dp)*upphase
-                      case ('down')
-                        wann_func(nxx, nyy, nzz, loop_w) = cmplx(sqrt(dnspinor), 0.0_dp, dp)*dnphase
-                      case default
-                        call io_error('plot_wannier: Invalid wannier_plot_spinor_mode '//trim(wannier_plot_spinor_mode))
-                      end select
-                      wann_func(nxx, nyy, nzz, loop_w) = wann_func(nxx, nyy, nzz, loop_w)/real(num_kpts, dp)
-                    endif
-                  endif
-                end do
-              end do
-            end do
-          end do
-
-        end do
+                  do ispin = 1, nspin
+                    wann_func(nxx, nyy, nzz, ispin, loop_w) &
+                      = wann_func(nxx, nyy, nzz, ispin, loop_w) &
+                      + u_matrix(loop_b, wannier_plot_list(loop_w), loop_kpt) &
+                      * r_wvfn(npoint, loop_b, ispin) * catmp
+                  enddo ! ispin
+                enddo ! loop_w
+              enddo ! loop_b
+            end do ! nxx
+          end do ! nyy
+        end do ! nzz
 
       end do !loop over kpoints
+
+      IF (jml_plot_r_times_wf) THEN
+print*, 'wannier_centres(1, wannier_plot_list(1)) = ', wannier_centres(1, wannier_plot_list(1))
+
+        do nzz = -((ngs(3))/2)*ngz, ((ngs(3) + 1)/2)*ngz - 1
+          do nyy = -((ngs(2))/2)*ngy, ((ngs(2) + 1)/2)*ngy - 1
+            do nxx = -((ngs(1))/2)*ngx, ((ngs(1) + 1)/2)*ngx - 1
+
+              do loop_w = 1, num_wannier_plot
+                catmp = real(nxx - 1, dp)/real(ngx, dp) * real_lattice(1, idir) &
+                      + real(nyy - 1, dp)/real(ngy, dp) * real_lattice(2, idir) &
+                      + real(nzz - 1, dp)/real(ngz, dp) * real_lattice(3, idir) &
+                      - wannier_centres(idir, wannier_plot_list(loop_w))
+
+                do ispin = 1, nspin
+                  wann_func(nxx, nyy, nzz, ispin, loop_w) &
+                    = wann_func(nxx, nyy, nzz, ispin, loop_w) * catmp
+                enddo ! ispin
+              enddo ! loop_w
+            end do ! nxx
+          end do ! nyy
+        end do ! nzz
+      endif ! jml_plot_r_times_wf
+
+      if (.not. spinors) then
+        wann_func_plot = wann_func(:, :, :, 1, :)
+      else ! spinor
+        do loop_w = 1, num_wannier_plot
+          upspinor = real(wann_func(:, :, :, 1, loop_w)* &
+                          conjg(wann_func(:, :, :, 1, loop_w)), dp)
+          dnspinor = real(wann_func(:, :, :, 2, loop_w)* &
+                          conjg(wann_func(:, :, :, 2, loop_w)), dp)
+          if (wannier_plot_spinor_phase) then
+            upphase = sign(1.0_dp, real(wann_func(:, :, :, 1, loop_w), dp))
+            dnphase = sign(1.0_dp, real(wann_func(:, :, :, 2, loop_w), dp))
+          else
+            upphase = 1.0_dp; dnphase = 1.0_dp
+          endif
+          select case (wannier_plot_spinor_mode)
+          case ('total')
+            wann_func_plot(:, :, :, loop_w) = cmplx(sqrt(upspinor + dnspinor), 0.0_dp, dp)
+          case ('up')
+            wann_func_plot(:, :, :, loop_w) = cmplx(sqrt(upspinor), 0.0_dp, dp)*upphase
+          case ('down')
+            wann_func_plot(:, :, :, loop_w) = cmplx(sqrt(dnspinor), 0.0_dp, dp)*dnphase
+          case default
+            call io_error('plot_wannier: Invalid wannier_plot_spinor_mode '//trim(wannier_plot_spinor_mode))
+          end select
+        enddo ! loop_w
+      endif ! spinor
+
+      wann_func_plot = wann_func_plot / real(num_kpts, dp)
+
+      ! Multiply i because velocity matrix is -i * [H, x], so that the corresponding PWFS
+      ! are almost pure imaginary.
+      IF (.NOT. jml_plot_r_times_wf) then
+        wann_func_plot = cmplx_i * wann_func_plot
+      endif
 
       if (.not. spinors) then !!!!! For spinor Wannier functions, the steps below are not necessary.
         ! fix the global phase by setting the wannier to
@@ -1978,18 +2103,18 @@ contains
         !   do nzz = -((ngs(3))/2)*ngz, ((ngs(3) + 1)/2)*ngz - 1
         !     do nyy = -((ngs(2))/2)*ngy, ((ngs(2) + 1)/2)*ngy - 1
         !       do nxx = -((ngs(1))/2)*ngx, ((ngs(1) + 1)/2)*ngx - 1
-        !         wann_func(nxx, nyy, nzz, loop_w) = wann_func(nxx, nyy, nzz, loop_w)/real(num_kpts, dp)
-        !         tmax = real(wann_func(nxx, nyy, nzz, loop_w)* &
-        !                     conjg(wann_func(nxx, nyy, nzz, loop_w)), dp)
+        !         wann_func_plot(nxx, nyy, nzz, loop_w) = wann_func_plot(nxx, nyy, nzz, loop_w)/real(num_kpts, dp)
+        !         tmax = real(wann_func_plot(nxx, nyy, nzz, loop_w)* &
+        !                     conjg(wann_func_plot(nxx, nyy, nzz, loop_w)), dp)
         !         if (tmax > tmaxx) then
         !           tmaxx = tmax
-        !           wmod = wann_func(nxx, nyy, nzz, loop_w)
+        !           wmod = wann_func_plot(nxx, nyy, nzz, loop_w)
         !         end if
         !       end do
         !     end do
         !   end do
         !   wmod = wmod/sqrt(real(wmod)**2 + aimag(wmod)**2)
-        !   wann_func(:, :, :, loop_w) = wann_func(:, :, :, loop_w)/wmod
+        !   wann_func_plot(:, :, :, loop_w) = wann_func_plot(:, :, :, loop_w)/wmod
         ! end do
         !
         ! Check the 'reality' of the WF
@@ -1999,9 +2124,9 @@ contains
           do nzz = -((ngs(3))/2)*ngz, ((ngs(3) + 1)/2)*ngz - 1
             do nyy = -((ngs(2))/2)*ngy, ((ngs(2) + 1)/2)*ngy - 1
               do nxx = -((ngs(1))/2)*ngx, ((ngs(1) + 1)/2)*ngx - 1
-                if (abs(real(wann_func(nxx, nyy, nzz, loop_w), dp)) >= 0.01_dp) then
-                  ratio = abs(aimag(wann_func(nxx, nyy, nzz, loop_w)))/ &
-                          abs(real(wann_func(nxx, nyy, nzz, loop_w), dp))
+                if (abs(real(wann_func_plot(nxx, nyy, nzz, loop_w), dp)) >= 0.01_dp) then
+                  ratio = abs(aimag(wann_func_plot(nxx, nyy, nzz, loop_w)))/ &
+                          abs(real(wann_func_plot(nxx, nyy, nzz, loop_w), dp))
                   ratmax = max(ratmax, ratio)
                 end if
               end do
@@ -2028,6 +2153,50 @@ contains
     return
 
   contains
+
+  subroutine read_unk_file(filename, ngx, ngy, ngz, loop_kpt, r_wvfn_tmp)
+    !
+    implicit none
+    !
+    character(len=*), intent(in) :: filename
+    integer, intent(in) :: ngx, ngy, ngz, loop_kpt
+    complex(dp) :: r_wvfn_tmp(ngx*ngy*ngz, max_nun_inc, nspin)
+    !
+    ! write(stdout, '(1x, a, a)') 'Reading ', TRIM(filename)
+    ! FLUSH(stdout)
+    !
+    file_unit = io_file_unit()
+    open (unit=file_unit, file=trim(filename), form='unformatted')
+    read (file_unit) ix, iy, iz, ik, nbnd
+    !
+    if ((ix /= ngx) .or. (iy /= ngy) .or. (iz /= ngz) .or. (ik /= loop_kpt)) then
+      write (stdout, '(1x,a,a)') 'WARNING: mismatch in file', trim(filename)
+      write (stdout, '(1x,5(a6,I5))') '   ix=', ix, '   iy=', iy, '   iz=', iz, '   ik=', ik, ' nbnd=', nbnd
+      write (stdout, '(1x,5(a6,I5))') '  ngx=', ngx, '  ngy=', ngy, '  ngz=', ngz, '  kpt=', loop_kpt, 'bands=', num_bands
+      call io_error('plot_wannier')
+    end if
+
+    if (have_disentangled) then
+      counter = 1
+      do loop_b = 1, num_bands
+        ! if (counter > num_inc) exit
+        do ispin = 1, nspin
+          ! read (file_unit) (r_wvfn_tmp(nx, counter, ispin), nx=1, ngx*ngy*ngz)
+          read (file_unit) (r_wvfn_tmp(nx, loop_b, ispin), nx=1, ngx*ngy*ngz)
+        enddo
+        ! if (inc_band(loop_b)) counter = counter + 1
+      end do
+    else
+      do loop_b = 1, num_bands
+        do ispin = 1, nspin
+          read (file_unit) (r_wvfn_tmp(nx, loop_b, ispin), nx=1, ngx*ngy*ngz)
+        enddo
+      enddo
+    end if
+
+    close (file_unit)
+    !
+  end subroutine read_unk_file
 
     !============================================!
     subroutine internal_cube_format()
@@ -2121,7 +2290,6 @@ contains
 
         wann_index = wannier_plot_list(loop_w)
         write (wancube, 209) trim(seedname), idir, wann_index
-print*, wancube
 
         ! Find start and end of cube wrt simulation (home) cell origin
         do i = 1, 3
@@ -2211,7 +2379,7 @@ print*, wancube
                 write (stdout, *) '   (3) set wannier_plot_format=xcrysden'
                 call io_error('Error plotting WF cube.')
               endif
-              wann_cube(nxx, nyy, nzz) = real(wann_func(qxx, qyy, qzz, loop_w), dp)
+              wann_cube(nxx, nyy, nzz) = real(wann_func_plot(qxx, qyy, qzz, loop_w), dp)
             enddo
           enddo
         enddo
@@ -2336,7 +2504,7 @@ print*, wancube
 
       implicit none
 
-201   format(a, '_', i5.5, '.xsf')
+208   format(a, '_idir', i1, '_', i5.5, '.xsf')
 
       ! this is to create the WF...xsf output, to be read by XCrySDen
       ! (coordinates + isosurfaces)
@@ -2360,7 +2528,7 @@ print*, wancube
 
       do loop_b = 1, num_wannier_plot
 
-        write (wanxsf, 201) trim(seedname), wannier_plot_list(loop_b)
+        write (wanxsf, 208) trim(seedname), idir, wannier_plot_list(loop_b)
 
         file_unit = io_file_unit()
         open (unit=file_unit, file=trim(wanxsf), form='formatted', status='unknown')
@@ -2398,7 +2566,7 @@ print*, wancube
         write (file_unit, '(3f12.7)') dirl(2, 1), dirl(2, 2), dirl(2, 3)
         write (file_unit, '(3f12.7)') dirl(3, 1), dirl(3, 2), dirl(3, 3)
         write (file_unit, '(6e13.5)') &
-          (((real(wann_func(nx, ny, nz, loop_b)), nx=-((ngs(1))/2)*ngx, ((ngs(1) + 1)/2)*ngx - 1), &
+          (((real(wann_func_plot(nx, ny, nz, loop_b)), nx=-((ngs(1))/2)*ngx, ((ngs(1) + 1)/2)*ngx - 1), &
             ny=-((ngs(2))/2)*ngy, ((ngs(2) + 1)/2)*ngy - 1), nz=-((ngs(3))/2)*ngz, ((ngs(3) + 1)/2)*ngz - 1)
         write (file_unit, '("END_DATAGRID_3D",/, "END_BLOCK_DATAGRID_3D")')
         close (file_unit)

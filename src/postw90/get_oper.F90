@@ -1944,11 +1944,6 @@ contains
       svel_q_cart = svel_q_cart * bohr_angstrom_internal * 0.5_dp / eV_au
       dsuru_q_cart = dsuru_q_cart * bohr_angstrom_internal**2 * 0.5_dp / eV_au
 
-      ! dsuru_q_cart in QE AHC is dsuru_q_cart(m, n) = (numerator) / (e_n - e_m)
-      ! Here, we need dsuru_q_cart(m, n) = (numerator) / (e_m - e_n)
-      ! So, apply -1.
-      dsuru_q_cart = -dsuru_q_cart
-
       do ik = 1, num_kpts
         if (have_disentangled) then
           num_states(ik) = ndimwin(ik)

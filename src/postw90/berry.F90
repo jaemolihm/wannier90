@@ -1710,7 +1710,7 @@ contains
         enddo
 
         ! dipole matrix element
-        r_mn(:) = AA_bar(m, n, :) + cmplx_i*D_h(m, n, :)
+        r_mn(:) = AA_bar(m, n, :) + cmplx_i*HH_da_bar(m, n, :)/(eig(n)-eig(m))
 
         ! loop over direction of generalized derivative
         do a = 1, 3
@@ -1718,14 +1718,14 @@ contains
           ! its composed of 8 terms in total, see Eq (34) combined with (30) and
           ! (32) of IATS18
           gen_r_nm(:) = (AA_da_bar(n, m, :, a) &
-                         + ((AA_bar(n, n, :) - AA_bar(m, m, :))*D_h(n, m, a) + &
-                            (AA_bar(n, n, a) - AA_bar(m, m, a))*D_h(n, m, :)) &
+                         + ((AA_bar(n, n, :) - AA_bar(m, m, :))*HH_da_bar(n, m, a)/(eig(m)-eig(n)) + &
+                            (AA_bar(n, n, a) - AA_bar(m, m, a))*HH_da_bar(n, m, :)/(eig(m)-eig(n))) &
                          - cmplx_i*AA_bar(n, m, :)*(AA_bar(n, n, a) - AA_bar(m, m, a)) &
                          + sum_AD(:, a) &
                          + cmplx_i*(HH_dadb_bar(n, m, :, a) &
                                     + sum_HD(:, a) &
-                                    + (D_h(n, m, :)*(eig_da(n, a) - eig_da(m, a)) + &
-                                       D_h(n, m, a)*(eig_da(n, :) - eig_da(m, :)))) &
+                                    + (HH_da_bar(n, m, :)/(eig(m)-eig(n))*(eig_da(n, a) - eig_da(m, a)) + &
+                                       HH_da_bar(n, m, a)/(eig(m)-eig(n))*(eig_da(n, :) - eig_da(m, :)))) &
                          /(eig(m) - eig(n)))
 
           ! Correction term due to finite sc_eta

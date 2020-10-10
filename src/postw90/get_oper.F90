@@ -64,6 +64,8 @@ module w90_get_oper
   !! svel_r_pwf at Wannier basis.
   complex(kind=dp), allocatable, save :: dsuru_r_pwf(:, :, :, :, :)
   !! omega_r_pwf at Wannier basis.
+  complex(kind=dp), allocatable, save :: dvel_r_pwf(:, :, :, :, :)
+  !! dvel_r_pwf at Wannier basis.
   ! END JML
 
 contains
@@ -2082,6 +2084,140 @@ contains
     call comms_bcast(dsuru_r_pwf(1, 1, 1, 1, 1), num_wann*num_wann*nrpts_pw90*3*3)
 
   end subroutine get_dsuru_r_pwf_jml
+
+  !============================================================================
+  subroutine get_dvel_r_pwf_jml(do_spin)
+  !============================================================================
+  ! Transform dvel from coarse k to coarse R grid.
+  !
+  ! If do_spin is true,
+  !   dvel = <psi_mk| d^2 H / dk_idir dk_jdir |psi_nk>
+  ! If do_spin is false,
+  !   dvel = 1/2 <psi_mk| {d^2 H / dk_idir dk_jdir, S_z} |psi_nk>
+  !
+  ! dvel_mel in coarse k grid is read from dvel_mel.bin file, and then
+  ! directly transformed into coarse R grid.
+  ! No PWF-related correction is needed.
+  !
+  !============================================================================
+    use w90_io, only : io_file_unit, io_error, stdout
+    use w90_comms, only : on_root, comms_bcast
+    use w90_constants, only : bohr_angstrom_internal, eV_au, cmplx_0
+    use w90_parameters, only: num_bands, num_wann, ndimwin, num_kpts, &
+        have_disentangled, eigval, ahc_dir, ahc_nbnd_full, ahc_nbndskip, &
+        dis_froz_min, dis_froz_max, &
+        exclude_bands, num_exclude_bands
+    use w90_postw90_common, only: nrpts, v_matrix, nrpts_pw90
+    use w90_utility, only : utility_zgemmm, utility_zgemm_new
+
+    implicit none
+
+    logical, intent(in) :: do_spin
+    !! If true, use spin velocity. Otherwise, use velocity.
+
+    integer, allocatable :: num_states(:)
+
+    complex(kind=dp), allocatable :: dvel_q_cart_full(:, :, :, :)
+    !! vel_q at coarse k grid. Include all bands. Computed by ahc.f90.
+    complex(kind=dp), allocatable :: dvel_q_cart(:, :, :, :, :)
+    !! vel_q at coarse k grid. Only non-excluded bands. Computed by ahc.f90.
+    complex(kind=dp), allocatable :: dvel_q(:, :, :)
+    !! vel_q at coarse k grid, in wannier basis
+    complex(kind=dp), allocatable :: dvel_r_pwf_temp(:, :, :)
+    !! omega at real-space R grid, in wannier basis
+
+    integer :: ik, file_unit, recl, idir, jdir, m, n
+
+    ! We assume ahc_nbnd for ph.x input is equal to num_bands (after exclusion) here.
+
+    if (do_spin) then
+      call io_error('get_dvel_r_pwf_jml: do_spin = true not implemented')
+    endif
+
+    if (allocated(dvel_r_pwf)) then
+      return
+    endif
+
+    write(stdout, *) 'RUNNING get_dvel_r_pwf_jml with do_spin = ', do_spin
+
+    allocate(dvel_r_pwf(num_wann, num_wann, nrpts_pw90, 3, 3))
+
+    if (on_root) then
+
+      allocate (dvel_q_cart_full(ahc_nbnd_full, ahc_nbnd_full, 3, 3))
+      allocate (dvel_q_cart(num_bands, num_bands, 3, 3, num_kpts))
+      allocate (dvel_q(num_wann, num_wann, num_kpts))
+      allocate (dvel_r_pwf_temp(num_wann, num_wann, nrpts))
+      allocate (num_states(num_kpts))
+
+      ! read dvel_q_cart from ahc file
+      file_unit = io_file_unit()
+      inquire(iolength=recl) dvel_q_cart_full(:, :, :, :)
+      if (do_spin) then
+        open (file_unit, file=trim(ahc_dir) // '/dsvel_mel.bin', &
+          form='unformatted', access='direct', recl=recl, status='old')
+      else
+        open (file_unit, file=trim(ahc_dir) // '/dvel_mel.bin', &
+          form='unformatted', access='direct', recl=recl, status='old')
+      endif
+      do ik = 1, num_kpts
+        read (file_unit, rec=ik) dvel_q_cart_full(:, :, :, :)
+
+        ! Trim excluded states
+        do n = 1, num_bands
+          do m = 1, num_bands
+            dvel_q_cart(m, n, :, :, ik) = dvel_q_cart_full(m + ahc_nbndskip, n + ahc_nbndskip, :, :)
+          enddo
+        enddo
+      enddo ! ik
+      close (file_unit)
+
+      deallocate(dvel_q_cart_full)
+
+      ! Unit conversion: QE is in Rydberg atomic units, W90 is in angstrom, eV.
+      dvel_q_cart = dvel_q_cart * bohr_angstrom_internal**2 * 0.5_dp / eV_au
+
+      do ik = 1, num_kpts
+        if (have_disentangled) then
+          num_states(ik) = ndimwin(ik)
+        else
+          num_states(ik) = num_wann
+        endif
+      enddo
+
+      ! rotate dvel_q_cart from eigenbasis to wannier basis
+      ! FIXME: get_win_min
+
+      dO jdir = 1, 3
+        do idir = 1, 3
+          dvel_q = cmplx_0
+
+          do ik = 1, num_kpts
+            call utility_zgemmm(v_matrix(1:num_states(ik), 1:num_wann, ik), 'C', &
+                                dvel_q_cart(1:num_states(ik), 1:num_states(ik), idir, jdir, ik), 'N', &
+                                v_matrix(1:num_states(ik), 1:num_wann, ik), 'N', &
+                                dvel_q(:, :, ik))
+          enddo
+
+          call fourier_q_to_R(dvel_q, dvel_r_pwf_temp)
+
+          ! Apply degeneracy factor and reorder according to the wigner-seitz vectors
+          call operator_wigner_setup(dvel_r_pwf_temp, dvel_r_pwf(:, :, :, idir, jdir))
+
+        enddo ! idir
+      enddo ! jdir
+
+
+      inquire(iolength=ik) dvel_r_pwf
+      open(666, file='dvel_r_pwf.bin', form='unformatted', access='direct',recl=ik)
+      write(666, rec=1) dvel_r_pwf
+      close(666)
+
+    endif ! on_root
+
+    call comms_bcast(dvel_r_pwf(1, 1, 1, 1, 1), num_wann*num_wann*nrpts_pw90*3*3)
+
+  end subroutine get_dvel_r_pwf_jml
 
 
   !==================================================

@@ -113,7 +113,7 @@ contains
       use_pwf_jml, spinors
     use w90_get_oper, only: get_HH_R, get_AA_R, get_BB_R, get_CC_R, &
       get_SS_R, get_SHC_R, get_vel_r_pwf_jml, get_omega_r_pwf_jml, &
-      get_dsuru_r_pwf_jml
+      get_dsuru_r_pwf_jml, get_dvel_r_pwf_jml
 
     real(kind=dp), allocatable    :: adkpt(:, :)
 
@@ -303,7 +303,10 @@ contains
       call get_vel_r_pwf_jml
       ! if (spinors) call get_omega_r_pwf_jml
       ! if (spinors .and. eval_sc) call get_dsuru_r_pwf_jml(do_spin=.true.)
-      if (spinors .and. eval_sc) call get_dsuru_r_pwf_jml(do_spin=.false.)
+      if (eval_sc) then
+        call get_dsuru_r_pwf_jml(do_spin=.false.)
+        call get_dvel_r_pwf_jml(do_spin=.false.)
+      endif
     endif
 
     if (on_root) then
@@ -1683,7 +1686,7 @@ contains
     use w90_wan_ham, only: wham_get_eig_UU_HH_JJlist, wham_get_occ_mat_list, wham_get_D_h, &
       wham_get_eig_UU_HH_AA_sc, wham_get_eig_deleig, wham_get_D_h_P_value, &
       wham_get_eig_deleig_TB_conv, wham_get_eig_UU_HH_AA_sc_TB_conv
-    use w90_get_oper, only: AA_R, vel_r_pwf, HH_R, dsuru_r_pwf
+    use w90_get_oper, only: AA_R, vel_r_pwf, HH_R, dsuru_r_pwf, dvel_r_pwf
     use w90_utility, only: utility_rotate, utility_zdotu
     ! Arguments
     !
@@ -1704,6 +1707,7 @@ contains
 
     ! JML: pwf
     complex(kind=dp), allocatable :: duru_k(:, :, :, :)
+    complex(kind=dp), allocatable :: dvel_k(:, :, :, :)
     complex(kind=dp), allocatable :: vel_k(:, :, :)
     complex(kind=dp), allocatable :: dsuru_k(:, :)
     complex(kind=dp), allocatable :: delhh_svel(:, :)
@@ -1733,6 +1737,7 @@ contains
 
     ! JML: pwf
     allocate (duru_k(num_wann, num_wann, 3, 3))
+    allocate (dvel_k(num_wann, num_wann, 3, 3))
     allocate (delhh_svel(num_wann, num_wann))
     allocate (delhh_vel(num_wann, num_wann))
 
@@ -1820,6 +1825,12 @@ contains
         enddo
       enddo
 
+      do beta = 1, 3
+        call pw90common_fourier_R_to_k_vec(kpt, dvel_r_pwf(:, :, :, :, beta), OO_true=dvel_k(:, :, :, beta))
+        do alpha = 1, 3
+          call utility_rotate_new(dvel_k(:, :, alpha, beta), UU, num_wann)
+        enddo
+      enddo
 
       call pw90common_fourier_R_to_k_vec(kpt, vel_r_pwf, OO_true=vel_k)
       do alpha = 1, 3
@@ -1927,8 +1938,9 @@ contains
           ! BEGIN JML PWF for shift current
           if (use_pwf_jml) then
 
-            gen_r_nm(:) = - (duru_k(n, m, a, :) + CONJG(duru_k(m, n, a, :)))
-            gen_r_nm(:) = gen_r_nm(:) + vel_k(n, m, :) * (vel_k(n, n, a) - vel_k(m, m, a)) / (eig(n) - eig(m))
+            gen_r_nm(:) = - (duru_k(n, m, a, :) + CONJG(duru_k(m, n, a, :))) &
+              - dvel_k(n, m, a, :) &
+              + vel_k(n, m, :) * (vel_k(n, n, a) - vel_k(m, m, a)) / (eig(n) - eig(m))
             gen_r_nm(:) = gen_r_nm(:) * cmplx_i / (eig(n) - eig(m))
 
           endif

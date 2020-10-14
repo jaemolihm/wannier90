@@ -56,11 +56,11 @@ module w90_get_oper
   !! $$\langle 0n | \sigma_{x,y,z}.H  | Rm \rangle$$
 
   ! JML perturbed Wannier function
-  complex(kind=dp), allocatable, save :: omega_r_pwf(:, :, :)
+  complex(kind=dp), allocatable, save :: omega_r_pwf(:, :, :, :, :, :)
   !! omega_r_pwf at Wannier basis.
   complex(kind=dp), allocatable, save :: vel_r_pwf(:, :, :, :)
   !! vel_r_pwf at Wannier basis.
-  complex(kind=dp), allocatable, save :: svel_r_pwf(:, :, :, :)
+  complex(kind=dp), allocatable, save :: svel_r_pwf(:, :, :, :, :)
   !! svel_r_pwf at Wannier basis.
   complex(kind=dp), allocatable, save :: dsuru_r_pwf(:, :, :, :, :)
   !! omega_r_pwf at Wannier basis.
@@ -1666,11 +1666,11 @@ contains
 
     implicit none
 
-    complex(kind=dp), allocatable :: omega_q_cart(:, :, :, :, :)
+    complex(kind=dp), allocatable :: omega_q_cart(:, :, :, :, :, :)
     !! omega at coarse k grid. Computed by ahc.f90.
     complex(kind=dp), allocatable :: vel_q_cart(:, :, :, :)
     !! vel_q at coarse k grid. Computed by ahc.f90.
-    complex(kind=dp), allocatable :: svel_q_cart(:, :, :, :)
+    complex(kind=dp), allocatable :: svel_q_cart(:, :, :, :, :)
     !! vel_q at coarse k grid. Computed by ahc.f90.
     complex(kind=dp), allocatable :: omega_q(:, :, :)
     !! omega at coarse k grid, in wannier basis
@@ -1680,7 +1680,7 @@ contains
     complex(kind=dp), allocatable :: vel_inv_e_q(:,:), svel_inv_e_q(:,:), &
       omega_q_cart_add(:,:), qmat(:,:)
     integer, allocatable :: num_states(:)
-    integer :: ik, file_unit, recl, ib1, ib2, ib, jb, idir, jdir
+    integer :: ik, file_unit, recl, ib1, ib2, ib, jb, idir, jdir, ispin
 
     ! We assume ahc_nbnd for ph.x input is equal to num_bands (after exclusion) here.
 
@@ -1688,18 +1688,15 @@ contains
       return
     endif
 
-    allocate(omega_r_pwf(num_wann, num_wann, nrpts_pw90))
+    allocate(omega_r_pwf(num_wann, num_wann, nrpts_pw90, 3, 3, 3))
 
     if (on_root) then
 
-      idir = 1
-      jdir = 2
-
       allocate(omega_r_pwf_temp(num_wann, num_wann, nrpts))
 
-      allocate (omega_q_cart(num_bands, num_bands, 3, 3, num_kpts))
+      allocate (omega_q_cart(num_bands, num_bands, 3, 3, 3, num_kpts))
       allocate (vel_q_cart(ahc_nbnd_full, num_bands, 3, num_kpts))
-      allocate (svel_q_cart(ahc_nbnd_full, num_bands, 3, num_kpts))
+      allocate (svel_q_cart(ahc_nbnd_full, num_bands, 3, 3, num_kpts))
 
       allocate (omega_q(num_wann, num_wann, num_kpts))
 
@@ -1713,11 +1710,11 @@ contains
 
       ! read omega_q_cart from ahc file
       file_unit = io_file_unit()
-      inquire(iolength=recl) omega_q_cart(:, :, :, :, 1)
+      inquire(iolength=recl) omega_q_cart(:, :, :, :, :, 1)
       open (file_unit, file=trim(ahc_dir) // '/dsudu_mel.bin', &
         form='unformatted', access='direct', recl=recl, status='old')
       do ik = 1, num_kpts
-        read (file_unit, rec=ik) omega_q_cart(:, :, :, :, ik)
+        read (file_unit, rec=ik) omega_q_cart(:, :, :, :, :, ik)
       enddo
       close (file_unit)
 
@@ -1733,13 +1730,18 @@ contains
 
       ! read svel_q_cart from ahc file
       file_unit = io_file_unit()
-      inquire(iolength=recl) svel_q_cart(:, :, :, 1)
+      inquire(iolength=recl) svel_q_cart(:, :, :, :, 1)
       open (file_unit, file=trim(ahc_dir) // '/svel_mel.bin', &
         form='unformatted', access='direct', recl=recl, status='old')
       do ik = 1, num_kpts
-        read (file_unit, rec=ik) svel_q_cart(:, :, :, ik)
+        read (file_unit, rec=ik) svel_q_cart(:, :, :, :, ik)
       enddo
       close (file_unit)
+
+      ! Unit conversion: QE is in Rydberg atomic units, W90 is in angstrom, eV.
+      vel_q_cart = vel_q_cart * bohr_angstrom_internal * 0.5_dp / eV_au
+      svel_q_cart = svel_q_cart * bohr_angstrom_internal * 0.5_dp / eV_au
+      omega_q_cart = omega_q_cart * bohr_angstrom_internal ** 2
 
       do ik = 1, num_kpts
         if (have_disentangled) then
@@ -1751,8 +1753,6 @@ contains
 
       do ik = 1, num_kpts
 
-        omega_q_cart_add = (0.d0, 0.d0)
-
         ! qmat = 1 - v_matrix * v_matrix.H
         call utility_zgemm_new(v_matrix(:, :, ik), v_matrix(:, :, ik), qmat, 'N', 'C')
         qmat = - qmat
@@ -1760,40 +1760,44 @@ contains
           qmat(jb, jb) = 1.d0 + qmat(jb, jb)
         enddo
 
-        ! JML FIXME: Do we need the -1j factor??
+        do ispin = 1, 3
+          do jdir = 1, 3
+            do idir = 1, 3
 
-        ! vel_inv_e_q(i, j) = -1j * vel_q_cart(i, j, ik) / (eigval(j, ik) - eigval(i, ik))
-        vel_inv_e_q = (0.d0, 0.d0)
-        svel_inv_e_q = (0.d0, 0.d0)
-        do jb = 1, num_bands
-          do ib = 1, num_bands
-            if (abs(eigval(jb, ik) - eigval(ib, ik)) < 1.d-5) cycle
-            svel_inv_e_q(ib, jb) = svel_q_cart(ahc_nbndskip+ib, jb, idir, ik) / (eigval(jb, ik) - eigval(ib, ik))
-            vel_inv_e_q(ib, jb) = vel_q_cart(ahc_nbndskip+ib, jb, jdir, ik) / (eigval(jb, ik) - eigval(ib, ik))
-          enddo
-        enddo
-        ! vel_inv_e_q = (0.d0, -1.d0) * vel_inv_e_q
-        ! svel_inv_e_q = (0.d0, -1.d0) * svel_inv_e_q
+              omega_q_cart_add = (0.d0, 0.d0)
 
-        ! add svel_inv_e_q.H * qmat * vel_inv_e_q to omega_q_cart_add
+              ! vel_inv_e_q(i, j) = vel_q_cart(i, j, ik) / (eigval(j, ik) - eigval(i, ik))
+              vel_inv_e_q = (0.d0, 0.d0)
+              svel_inv_e_q = (0.d0, 0.d0)
+              do jb = 1, num_bands
+                do ib = 1, num_bands
+                  if (abs(eigval(jb, ik) - eigval(ib, ik)) < 1.d-5) cycle
+                  svel_inv_e_q(ib, jb) = svel_q_cart(ahc_nbndskip+ib, jb, idir, ispin, ik) &
+                    / (eigval(jb, ik) - eigval(ib, ik))
+                  vel_inv_e_q(ib, jb) = vel_q_cart(ahc_nbndskip+ib, jb, jdir, ik) &
+                    / (eigval(jb, ik) - eigval(ib, ik))
+                enddo
+              enddo
 
-        call utility_zgemmm(svel_inv_e_q, 'C', qmat, 'N', vel_inv_e_q, 'N', omega_q_cart_add)
+              ! add svel_inv_e_q.H * qmat * vel_inv_e_q to omega_q_cart_add
+              call utility_zgemmm(svel_inv_e_q, 'C', qmat, 'N', vel_inv_e_q, 'N', omega_q_cart_add)
 
-        ! omega_q_cart_add nonzero only for frozen states
-        do ib = 1, num_bands
-          if (eigval(ib, ik) > dis_froz_max .or. eigval(ib, ik) < dis_froz_min) then
-            omega_q_cart_add(ib, :) = (0.d0, 0.d0)
-            omega_q_cart_add(:, ib) = (0.d0, 0.d0)
-          endif
-        enddo
+              ! omega_q_cart_add nonzero only for frozen states
+              do ib = 1, num_bands
+                if (eigval(ib, ik) > dis_froz_max .or. eigval(ib, ik) < dis_froz_min) then
+                  omega_q_cart_add(ib, :) = (0.d0, 0.d0)
+                  omega_q_cart_add(:, ib) = (0.d0, 0.d0)
+                endif
+              enddo
 
-        omega_q_cart(:, :, idir, jdir, ik) = omega_q_cart(:, :, idir, jdir, ik) &
-         + omega_q_cart_add * (0.5_dp / eV_au) ** 2
+              omega_q_cart(:, :, idir, jdir, ispin, ik) &
+              = omega_q_cart(:, :, idir, jdir, ispin, ik) &
+              + omega_q_cart_add
 
+            enddo ! idir
+          enddo ! jdir
+        enddo ! ispin
       enddo ! ik
-
-      ! Unit conversion: QE is in Rydberg atomic units, W90 is in angstrom, eV.
-      omega_q_cart = omega_q_cart * bohr_angstrom_internal ** 2
 
       ! ! JML: This corresponds to "both" (i.e. not using outer window for PWF)
       ! ! omega_q_cart nonzero only for frozen states
@@ -1809,22 +1813,29 @@ contains
       ! rotate omega_q_cart(:, :, 1, 2, :) from eigenbasis to wannier basis
       ! FIXME: get_win_min
 
-      do ik = 1, num_kpts
+      do ispin = 1, 3
+        do jdir = 1, 3
+          do idir = 1, 3
+            do ik = 1, num_kpts
 
-        call utility_zgemmm(v_matrix(1:num_states(ik), 1:num_wann, ik), 'C', &
-                            omega_q_cart(1:num_states(ik), 1:num_states(ik), idir, jdir, ik), 'N', &
-                            v_matrix(1:num_states(ik), 1:num_wann, ik), 'N', &
-                            omega_q(:, :, ik))
-      enddo
+              call utility_zgemmm(v_matrix(1:num_states(ik), 1:num_wann, ik), 'C', &
+                                  omega_q_cart(1:num_states(ik), 1:num_states(ik), idir, jdir, ispin, ik), 'N', &
+                                  v_matrix(1:num_states(ik), 1:num_wann, ik), 'N', &
+                                  omega_q(:, :, ik))
+            enddo
 
-      call fourier_q_to_R(omega_q, omega_r_pwf_temp)
+            call fourier_q_to_R(omega_q, omega_r_pwf_temp)
 
-      ! Apply degeneracy factor and reorder according to the wigner-seitz vectors
-      call operator_wigner_setup(omega_r_pwf_temp, omega_r_pwf)
+            ! Apply degeneracy factor and reorder according to the wigner-seitz vectors
+            call operator_wigner_setup(omega_r_pwf_temp, omega_r_pwf(1, 1, 1, idir, jdir, ispin))
+
+          enddo ! idir
+        enddo ! jdir
+      enddo ! ispin
 
     endif ! on_root
 
-    call comms_bcast(omega_r_pwf(1, 1, 1), num_wann*num_wann*nrpts_pw90)
+    call comms_bcast(omega_r_pwf(1, 1, 1, 1, 1, 1), num_wann*num_wann*nrpts_pw90*3*3*3)
 
   end subroutine get_omega_r_pwf_jml
 
@@ -2241,26 +2252,26 @@ contains
 
     complex(kind=dp), allocatable :: vel_q_cart(:, :, :, :)
     !! vel_q at coarse k grid. Computed by ahc.f90 and read
-    complex(kind=dp), allocatable :: svel_q_cart(:, :, :, :)
+    complex(kind=dp), allocatable :: svel_q_cart(:, :, :, :, :)
     !! svel_q at coarse k grid. Computed by ahc.f90 and read
     complex(kind=dp), allocatable :: vel_q(:, :, :, :)
     !! vel at coarse k grid, in Hamiltonian eigenbasis
-    complex(kind=dp), allocatable :: svel_q(:, :, :, :)
+    complex(kind=dp), allocatable :: svel_q(:, :, :, :, :)
     !! svel at coarse k grid, in Hamiltonian eigenbasis
     complex(kind=dp), allocatable :: vel_q_w(:, :, :, :)
     !! vel at coarse k grid, in wannier basis
-    complex(kind=dp), allocatable :: svel_q_w(:, :, :, :)
+    complex(kind=dp), allocatable :: svel_q_w(:, :, :, :, :)
     !! svel at coarse k grid, in wannier basis
-    complex(kind=dp), allocatable :: vel_r_pwf_temp(:, :, :, :)
+    complex(kind=dp), allocatable :: vel_r_pwf_temp(:, :, :)
     !! vel at real space R grid, in wannier basis
-    complex(kind=dp), allocatable :: svel_r_pwf_temp(:, :, :, :)
+    complex(kind=dp), allocatable :: svel_r_pwf_temp(:, :, :)
     !! svel at real space R grid, in wannier basis
 
-    complex(kind=dp), allocatable :: vel_inv_e_q(:, :, :), svel_inv_e_q(:, :, :), &
+    complex(kind=dp), allocatable :: vel_inv_e_q(:, :, :), svel_inv_e_q(:, :, :, :), &
       vel_q_add(:, :), svel_q_add(:, :), qmat(:,:), mat_temp(:,:), mat_temp2(:,:), &
       qmat_small(:,:)
     integer, allocatable :: num_states(:)
-    integer :: ik, file_unit, recl, ib1, ib2, ib, jb, idir
+    integer :: ik, file_unit, recl, ib1, ib2, ib, jb, idir, ispin
 
     ! We assume ahc_nbnd for ph.x input is equal to num_bands (after exclusion) here.
 
@@ -2271,18 +2282,18 @@ contains
     if (on_root) then
 
       allocate(vel_r_pwf(num_wann, num_wann, nrpts_pw90, 3))
-      allocate(vel_r_pwf_temp(num_wann, num_wann, nrpts, 3))
+      allocate(vel_r_pwf_temp(num_wann, num_wann, nrpts))
       allocate(vel_q_cart(ahc_nbnd_full, num_bands, 3, num_kpts))
       allocate(vel_q(num_bands, num_bands, num_kpts, 3))
       allocate(vel_q_w(num_wann, num_wann, num_kpts, 3))
       allocate(vel_q_add(num_bands, num_bands))
 
       if (spinors) then
-        allocate(svel_r_pwf(num_wann, num_wann, nrpts_pw90, 3))
-        allocate(svel_r_pwf_temp(num_wann, num_wann, nrpts, 3))
-        allocate(svel_q_cart(ahc_nbnd_full, num_bands, 3, num_kpts))
-        allocate(svel_q(num_bands, num_bands, num_kpts, 3))
-        allocate(svel_q_w(num_wann, num_wann, num_kpts, 3))
+        allocate(svel_r_pwf(num_wann, num_wann, nrpts_pw90, 3, 3))
+        allocate(svel_r_pwf_temp(num_wann, num_wann, nrpts))
+        allocate(svel_q_cart(ahc_nbnd_full, num_bands, 3, 3, num_kpts))
+        allocate(svel_q(num_bands, num_bands, num_kpts, 3, 3))
+        allocate(svel_q_w(num_wann, num_wann, num_kpts, 3, 3))
         allocate(svel_q_add(num_bands, num_bands))
       endif
 
@@ -2305,14 +2316,18 @@ contains
       ! read svel_q_cart from ahc file
       if (spinors) then
         file_unit = io_file_unit()
-        inquire(iolength=recl) svel_q_cart(:, :, :, 1)
+        inquire(iolength=recl) svel_q_cart(:, :, :, :, 1)
         open (file_unit, file=TRIM(ahc_dir) // '/svel_mel.bin', &
           form='unformatted', access='direct', recl=recl, status='old')
         do ik = 1, num_kpts
-          read (file_unit, rec=ik) svel_q_cart(:, :, :, ik)
+          read (file_unit, rec=ik) svel_q_cart(:, :, :, :, ik)
         enddo
         close (file_unit)
       endif
+
+      ! Unit conversion: QE is in Rydberg atomic units, W90 is in angstrom, eV.
+      vel_q_cart = vel_q_cart * bohr_angstrom_internal * 0.5_dp / eV_au
+      if (spinors) svel_q_cart = svel_q_cart * bohr_angstrom_internal * 0.5_dp / eV_au
 
       allocate (num_states(num_kpts))
       do ik = 1, num_kpts
@@ -2332,25 +2347,36 @@ contains
         allocate (vel_inv_e_q(num_bands, num_bands, 3))
         vel_inv_e_q = cmplx_0
         if (spinors) then
-          allocate (svel_inv_e_q(num_bands, num_bands, 3))
+          allocate (svel_inv_e_q(num_bands, num_bands, 3, 3))
           svel_inv_e_q = cmplx_0
         endif
+
         do idir = 1, 3
           do jb = 1, num_bands
             do ib = 1, num_bands
               if (abs(eigval(jb, ik) - eigval(ib, ik)) < 1.d-5) cycle
               vel_inv_e_q(ib, jb, idir) &
               = vel_q_cart(ahc_nbndskip+ib, jb, idir, ik) / (eigval(jb, ik) - eigval(ib, ik))
-              if (spinors) then
-                svel_inv_e_q(ib, jb, idir) &
-                = svel_q_cart(ahc_nbndskip+ib, jb, idir, ik) / (eigval(jb, ik) - eigval(ib, ik))
-              endif
             enddo
           enddo
         enddo
 
+        if (spinors) then
+          do ispin = 1, 3
+            do idir = 1, 3
+              do jb = 1, num_bands
+                do ib = 1, num_bands
+                  if (abs(eigval(jb, ik) - eigval(ib, ik)) < 1.d-5) cycle
+                  svel_inv_e_q(ib, jb, idir, ispin) &
+                  = svel_q_cart(ahc_nbndskip+ib, jb, idir, ispin, ik) / (eigval(jb, ik) - eigval(ib, ik))
+                enddo
+              enddo
+            enddo
+          enddo
+        endif ! spinors
+
         ! qmat = 1 - v_matrix * v_matrix.H
-        call utility_zgemm_new(v_matrix(:,:,ik), v_matrix(:,:,ik), qmat, 'N', 'C')
+        call utility_zgemm_new(v_matrix(:, :, ik), v_matrix(:, :, ik), qmat, 'N', 'C')
         qmat = - qmat
         do jb = 1, num_bands
           qmat(jb, jb) = 1.d0 + qmat(jb, jb)
@@ -2379,24 +2405,28 @@ contains
             enddo
           enddo
 
-          if (spinors) then
-            ! same for svel_q_add
-            call utility_zgemm_new(svel_inv_e_q(:, :, idir), qmat_small, mat_temp, 'C', 'N')
-
-            svel_q_add = cmplx_0
-            do ib = 1, num_bands
-              ! only frozen states
-              if (eigval(ib, ik) > dis_froz_max .or. eigval(ib, ik) < dis_froz_min) cycle
-
-              do jb = 1, num_bands
-                svel_q_add(ib, jb) = svel_q_add(ib, jb) + mat_temp(ib, jb) * eigval(jb, ik)
-                svel_q_add(jb, ib) = svel_q_add(jb, ib) + conjg(mat_temp(ib, jb)) * eigval(jb, ik)
-              enddo
-            enddo
-          endif
-
           vel_q(:, :, ik, idir) = vel_q(:, :, ik, idir) + vel_q_add
-          if (spinors) svel_q(:, :, ik, idir) = svel_q(:, :, ik, idir) + svel_q_add
+
+          if (spinors) then
+            do ispin = 1, 3
+              ! same for svel_q_add
+              call utility_zgemm_new(svel_inv_e_q(:, :, idir, ispin), qmat_small, mat_temp, 'C', 'N')
+
+              svel_q_add = cmplx_0
+              do ib = 1, num_bands
+                ! only frozen states
+                if (eigval(ib, ik) > dis_froz_max .or. eigval(ib, ik) < dis_froz_min) cycle
+
+                do jb = 1, num_bands
+                  svel_q_add(ib, jb) = svel_q_add(ib, jb) + mat_temp(ib, jb) * eigval(jb, ik)
+                  svel_q_add(jb, ib) = svel_q_add(jb, ib) + conjg(mat_temp(ib, jb)) * eigval(jb, ik)
+                enddo
+              enddo
+
+              svel_q(:, :, ik, idir, ispin) = svel_q(:, :, ik, idir, ispin) + svel_q_add
+
+            enddo ! ispin
+          endif ! spinors
 
         enddo ! idir
 
@@ -2405,22 +2435,26 @@ contains
             do ib = 1, num_bands
               vel_q(ib, jb, ik, idir) = vel_q(ib, jb, ik, idir) &
                 + vel_q_cart(ahc_nbndskip + ib, jb, idir, ik)
-              if (spinors) then
-                svel_q(ib, jb, ik, idir) = svel_q(ib, jb, ik, idir) &
-                  + svel_q_cart(ahc_nbndskip + ib, jb, idir, ik)
-              endif
             enddo
           enddo
         enddo !idir
+        if (spinors) then
+          do ispin = 1, 3
+            do idir = 1, 3
+              do jb = 1, num_bands
+                do ib = 1, num_bands
+                  svel_q(ib, jb, ik, idir, ispin) = svel_q(ib, jb, ik, idir, ispin) &
+                    + svel_q_cart(ahc_nbndskip + ib, jb, idir, ispin, ik)
+                enddo ! ib
+              enddo ! jb
+            enddo !idir
+          enddo ! ispin
+        endif ! spinors
 
         deallocate(vel_inv_e_q)
         if (spinors) deallocate(svel_inv_e_q)
 
       enddo ! ik
-
-      ! Unit conversion: QE is in Rydberg atomic units, W90 is in angstrom, eV.
-      vel_q = vel_q * bohr_angstrom_internal * 0.5_dp / eV_au
-      if (spinors) svel_q = svel_q * bohr_angstrom_internal * 0.5_dp / eV_au
 
       ! rotate vel_q from eigenbasis to wannier basis
       ! FIXME: get_win_min
@@ -2440,14 +2474,21 @@ contains
                               vel_q(1:num_states(ik), 1:num_states(ik), ik, idir), 'N', &
                               v_matrix(1:num_states(ik), 1:num_wann, ik), 'N', &
                               vel_q_w(:, :, ik, idir))
-          if (spinors) then
-            call utility_zgemmm(v_matrix(1:num_states(ik), 1:num_wann, ik), 'C', &
-                                svel_q(1:num_states(ik), 1:num_states(ik), ik, idir), 'N', &
-                                v_matrix(1:num_states(ik), 1:num_wann, ik), 'N', &
-                                svel_q_w(:, :, ik, idir))
-          endif
         enddo
       enddo
+
+      if (spinors) then
+        do ispin = 1, 3
+          do idir = 1, 3
+            do ik = 1, num_kpts
+              call utility_zgemmm(v_matrix(1:num_states(ik), 1:num_wann, ik), 'C', &
+                                  svel_q(1:num_states(ik), 1:num_states(ik), ik, idir, ispin), 'N', &
+                                  v_matrix(1:num_states(ik), 1:num_wann, ik), 'N', &
+                                  svel_q_w(:, :, ik, idir, ispin))
+            enddo
+          enddo
+        enddo
+      endif
 
       ! inquire(iolength=ik) vel_q_w
       ! open(666, file='debug_vel_q_w.bin', form='unformatted', access='direct',recl=ik)
@@ -2463,25 +2504,32 @@ contains
       ! close(666)
 
       do idir = 1, 3
-        call fourier_q_to_R(vel_q_w(:, :, :, idir), vel_r_pwf_temp(:, :, :, idir))
-        if (spinors) call fourier_q_to_R(svel_q_w(:, :, :, idir), svel_r_pwf_temp(:, :, :, idir))
+        call fourier_q_to_R(vel_q_w(:, :, :, idir), vel_r_pwf_temp(:, :, :))
+
+        ! Apply degeneracy factor and reorder according to the wigner-seitz vectors
+        call operator_wigner_setup(vel_r_pwf_temp(:, :, :), vel_r_pwf(:, :, :, idir))
       enddo
 
-      ! Apply degeneracy factor and reorder according to the wigner-seitz vectors
-      do idir = 1, 3
-        call operator_wigner_setup(vel_r_pwf_temp(:, :, :, idir), vel_r_pwf(:, :, :, idir))
-        if (spinors) call operator_wigner_setup(svel_r_pwf_temp(:, :, :, idir), svel_r_pwf(:, :, :, idir))
-      enddo
+      if (spinors) then
+        do ispin = 1, 3
+          do idir = 1, 3
+            call fourier_q_to_R(svel_q_w(:, :, :, idir, ispin), svel_r_pwf_temp(:, :, :))
+
+            ! Apply degeneracy factor and reorder according to the wigner-seitz vectors
+            call operator_wigner_setup(svel_r_pwf_temp(:, :, :), svel_r_pwf(:, :, :, idir, ispin))
+          enddo
+        enddo
+      endif
 
     endif
 
     if (.not. on_root) then
       allocate(vel_r_pwf(num_wann, num_wann, nrpts_pw90, 3))
-      if (spinors) allocate(svel_r_pwf(num_wann, num_wann, nrpts_pw90, 3))
+      if (spinors) allocate(svel_r_pwf(num_wann, num_wann, nrpts_pw90, 3, 3))
     endif
 
-    call comms_bcast(vel_r_pwf(1, 1, 1, 1), 3*num_wann*num_wann*nrpts_pw90)
-    if (spinors) call comms_bcast(svel_r_pwf(1, 1, 1, 1), 3*num_wann*num_wann*nrpts_pw90)
+    call comms_bcast(vel_r_pwf(1, 1, 1, 1), num_wann*num_wann*nrpts_pw90*3)
+    if (spinors) call comms_bcast(svel_r_pwf(1, 1, 1, 1, 1), num_wann*num_wann*nrpts_pw90*3*3)
 
     ! DEBUG
     ! Write vel_r to file

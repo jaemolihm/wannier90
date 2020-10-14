@@ -301,7 +301,7 @@ contains
 
     if (use_pwf_jml) then
       call get_vel_r_pwf_jml
-      ! if (spinors) call get_omega_r_pwf_jml
+      if (spinors .and. eval_shc) call get_omega_r_pwf_jml
       ! if (spinors .and. eval_sc) call get_dsuru_r_pwf_jml(do_spin=.true.)
       if (eval_sc) then
         call get_dsuru_r_pwf_jml(do_spin=.false.)
@@ -1747,7 +1747,7 @@ contains
 
     !   call pw90common_fourier_R_to_k_new(kpt, HH_R, OO=HH)
     !   call utility_diagonalize(HH, num_wann, eig, UU)
-    !   call pwf_jml_get_dsuru_k(kpt, UU, dsuru_k, delhh_svel, delhh_vel, 1, 2)
+    !   call pwf_jml_get_dsuru_k(kpt, UU, dsuru_k, delhh_svel, delhh_vel, 1, 2, 3)
     !   ! dsuru_save(:, :, 1, ik): sternheimer term only
     !   ! dsuru_save(:, :, 2, ik): sternheimer term + direct (sum-over-bands) term
 
@@ -2023,7 +2023,7 @@ contains
   end subroutine berry_get_sc_klist
 
 ! BEGIN JML perturbed Wannier functions -----------------------------------
-  subroutine pwf_jml_get_omegak(kpt, UU, omega_k, delhh_svel, delhh_vel, alpha, beta)
+  subroutine pwf_jml_get_omegak(kpt, UU, omega_k, delhh_svel, delhh_vel, alpha, beta, gamma)
     !
     ! alpha: direction of spin-velocity matrix
     ! beta: direction of velocity matrix
@@ -2045,13 +2045,15 @@ contains
     !! Direction of the spin-velocity matrix
     integer, intent(in) :: beta
     !! Direction of the velocity matrix
+    integer, intent(in) :: gamma
+    !! Direction of the spin
 
     integer :: i
 
-    call pw90common_fourier_R_to_k_new(kpt, omega_r_pwf, OO=omega_k)
+    call pw90common_fourier_R_to_k_new(kpt, omega_r_pwf(:, :, :, alpha, beta, gamma), OO=omega_k)
     call utility_rotate_new(omega_k, UU, num_wann)
 
-    call pw90common_fourier_R_to_k_new(kpt, svel_r_pwf(:, :, :, alpha), OO=delhh_svel)
+    call pw90common_fourier_R_to_k_new(kpt, svel_r_pwf(:, :, :, alpha, gamma), OO=delhh_svel)
     call utility_rotate_new(delhh_svel, UU, num_wann)
 
     call pw90common_fourier_R_to_k_new(kpt, vel_r_pwf(:, :, :, beta), OO=delhh_vel)
@@ -2059,10 +2061,11 @@ contains
 
   end subroutine pwf_jml_get_omegak
 
-  subroutine pwf_jml_get_dsuru_k(kpt, UU, dsuru_k, delhh_svel, delhh_vel, alpha, beta)
+  subroutine pwf_jml_get_dsuru_k(kpt, UU, dsuru_k, delhh_svel, delhh_vel, alpha, beta, gamma)
     !
     ! alpha: direction of spin-velocity matrix
     ! beta: direction of velocity matrix
+    ! gamma: direction of the spin
     !
     use w90_parameters, only: num_wann
     use w90_utility, only : utility_rotate_new
@@ -2081,13 +2084,15 @@ contains
     !! Direction of the spin-velocity matrix
     integer, intent(in) :: beta
     !! Direction of the velocity matrix
+    integer, intent(in) :: gamma
+    !! Direction of the spin
 
     integer :: i
 
     call pw90common_fourier_R_to_k_new(kpt, dsuru_r_pwf(:, :, :, alpha, beta), OO=dsuru_k)
     call utility_rotate_new(dsuru_k, UU, num_wann)
 
-    call pw90common_fourier_R_to_k_new(kpt, svel_r_pwf(:, :, :, alpha), OO=delhh_svel)
+    call pw90common_fourier_R_to_k_new(kpt, svel_r_pwf(:, :, :, alpha, gamma), OO=delhh_svel)
     call utility_rotate_new(delhh_svel, UU, num_wann)
 
     call pw90common_fourier_R_to_k_new(kpt, vel_r_pwf(:, :, :, beta), OO=delhh_vel)
@@ -2217,7 +2222,7 @@ contains
     else ! use_pwf_jml
       call pw90common_fourier_R_to_k_new(kpt, HH_R, OO=HH)
       call utility_diagonalize(HH, num_wann, eig, UU)
-      call pwf_jml_get_omegak(kpt, UU, omega_k, delhh_svel, delhh_vel, shc_alpha, shc_beta)
+      call pwf_jml_get_omegak(kpt, UU, omega_k, delhh_svel, delhh_vel, shc_alpha, shc_beta, shc_gamma)
     endif ! use_pwf_jml
 
 

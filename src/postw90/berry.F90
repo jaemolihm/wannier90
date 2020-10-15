@@ -2134,7 +2134,8 @@ contains
       use_pwf_jml
     use w90_postw90_common, only: pw90common_get_occ, &
       pw90common_fourier_R_to_k_vec, pw90common_kmesh_spacing, &
-      pw90common_fourier_R_to_k_new
+      pw90common_fourier_R_to_k_new, &
+      pw90common_get_occ_jml
     use w90_wan_ham, only: wham_get_D_h, wham_get_eig_deleig
     use w90_get_oper, only: AA_R, HH_R
     use w90_parameters, only : jml_only_inter_gap, jml_num_elec
@@ -2236,7 +2237,8 @@ contains
     elseif (lfermi) then
       ! get occ for different fermi_energy
       do i = 1, nfermi
-        call pw90common_get_occ(eig, occ_fermi(:, i), fermi_energy_list(i))
+        ! call pw90common_get_occ(eig, occ_fermi(:, i), fermi_energy_list(i))
+        call pw90common_get_occ_jml(eig, occ_fermi(:, i), fermi_energy_list(i))
       end do
     end if
 

@@ -38,6 +38,7 @@ module w90_postw90_common
   public :: pw90common_fourier_R_to_k_new_second_d, pw90common_fourier_R_to_k_new_second_d_TB_conv, &
             pw90common_fourier_R_to_k_vec_dadb, pw90common_fourier_R_to_k_vec_dadb_TB_conv
   public :: nrpts_pw90, irvec_pw90, crvec_pw90, ir_ind_ws_to_pw90, wannier_centres_from_AA_R
+  public :: pw90common_get_occ_jml
 
 ! AAM PROBABLY REMOVE THIS
   ! This 'save' statement could probably be ommited, since this module
@@ -500,6 +501,7 @@ contains
     call comms_bcast(ahc_nbnd_full, 1)
     call comms_bcast(jml_only_inter_gap, 1)
     call comms_bcast(jml_num_elec, 1)
+    call comms_bcast(jml_temperature, 1)
     call comms_bcast(dis_froz_min, 1)
     call comms_bcast(dis_froz_max, 1)
     ! END JML
@@ -668,6 +670,59 @@ contains
 !    end if
 
   end subroutine pw90common_get_occ
+
+  subroutine pw90common_get_occ_jml(eig, occ, ef)
+    !! Compute the electronic occupancy
+    !! jml_temperature: temperature in eV units
+
+    use w90_constants, only: dp,eps7
+    use w90_parameters, only: num_wann, jml_temperature
+!    use w90_constants, only    : elem_charge_SI,k_B_SI
+
+    ! Arguments
+    !
+    real(kind=dp), intent(in)  :: eig(num_wann)
+    !! Eigenvalues
+    real(kind=dp), intent(in)  :: ef
+    !! Fermi level
+    real(kind=dp), intent(out) :: occ(num_wann)
+    !! Occupancy of states
+
+    ! Misc/Dummy
+    !
+    integer       :: i
+!    real(kind=dp) :: kt
+
+    ! State occupancies
+    !
+    if (jml_temperature < eps7) then
+      !
+      ! Use a step function occupancy (T=0)
+      !
+      occ(:) = 0.0_dp
+      do i = 1, num_wann
+        if (eig(i) < ef) occ(i) = 1.0_dp
+      end do
+    else
+      !
+      ! Use a Fermi-Dirac occupancy (T=jml_temperature, in eV)
+      !
+      ! k_B.T in electron-volts
+      !
+      ! kt=k_B_SI*smear_temp/elem_charge_SI
+      occ(i) = 0.0_dp
+      do i = 1, num_wann
+        if ((eig(i)-ef) / jml_temperature > 40.0_dp) then
+          occ(i) = 0.0_dp
+        elseif ((eig(i)-ef) / jml_temperature < -40.0_dp) then
+          occ(i) = 1.0_dp
+        else
+          occ(i) = 1.0_dp / (exp((eig(i)-ef)/jml_temperature) + 1.0_dp)
+        endif
+      end do
+    end if ! jml_temperature
+
+  end subroutine pw90common_get_occ_jml
 
 !=======================================================================
 

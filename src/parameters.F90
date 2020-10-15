@@ -229,6 +229,7 @@ module w90_parameters
   integer, public, save :: ahc_nbndskip
   logical, public, save :: jml_only_inter_gap
   integer, public, save :: jml_num_elec
+  real(kind=dp), public, save :: jml_temperature
   ! END JML
 
   logical, public, save :: gyrotropic
@@ -1361,6 +1362,8 @@ contains
     call param_get_keyword('jml_num_elec', found, i_value=jml_num_elec)
     if (jml_num_elec .and. (.not. found)) &
       call io_error('Error: jml_num_elec must be specified to use jml_num_elec')
+    jml_temperature = 0.d0
+    call param_get_keyword('jml_temperature', found, r_value=jml_temperature)
     ! END JML
 
     spin_moment = .false.
@@ -6493,6 +6496,7 @@ contains
     call comms_bcast(ahc_nbnd_full, 1)
     call comms_bcast(jml_only_inter_gap, 1)
     call comms_bcast(jml_num_elec, 1)
+    call comms_bcast(jml_temperature, 1)
     ! END JML
 
   end subroutine param_dist

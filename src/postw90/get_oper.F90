@@ -283,7 +283,8 @@ contains
     use w90_constants, only: dp, cmplx_0, cmplx_i
     use w90_parameters, only: num_kpts, nntot, num_wann, wb, bk, timing_level, &
       num_bands, ndimwin, nnlist, have_disentangled, &
-      transl_inv, nncell, effective_model
+      transl_inv, nncell, effective_model, &
+      jml_diagonal_tb
     use w90_postw90_common, only: nrpts, nrpts_pw90, irvec, &
       wannier_centres_from_AA_R
     use w90_io, only: stdout, io_file_unit, io_error, io_stopwatch, &
@@ -522,10 +523,30 @@ contains
         enddo
       enddo
 
+      ! Set AA_R diagonal: diagonal tight-binding approximation
+      if (jml_diagonal_tb) then
+        AA_R_temp = cmplx_0
+        do ir = 1, nrpts
+          if ((irvec(1, ir) .eq. 0) .and. (irvec(2, ir) .eq. 0) .and. (irvec(3, ir) .eq. 0)) then
+            do j = 1, num_wann
+              AA_R_temp(j, j, ir, :) = wannier_centres_from_AA_R(:, j)
+            enddo
+          endif
+        enddo
+
+        write(stdout, '(a)') '=================================================='
+        write(stdout, '(a)') 'wannier_centres_from_AA_R'
+        do j = 1, num_wann
+          write(stdout, '(3F12.8)') wannier_centres_from_AA_R(1:3, j)
+        enddo
+        write(stdout, '(a)') '=================================================='
+      endif
+
       ! Apply degeneracy factor and reorder according to the wigner-seitz vectors
       do idir = 1, 3
         call operator_wigner_setup(AA_R_temp(:, :, :, idir), AA_R(:, :, :, idir))
       enddo
+
 
     endif !on_root
 

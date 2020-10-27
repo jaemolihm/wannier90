@@ -230,6 +230,7 @@ module w90_parameters
   logical, public, save :: jml_only_inter_gap
   integer, public, save :: jml_num_elec
   real(kind=dp), public, save :: jml_temperature
+  logical, public, save :: jml_diagonal_tb
   ! END JML
 
   logical, public, save :: gyrotropic
@@ -1364,6 +1365,9 @@ contains
       call io_error('Error: jml_num_elec must be specified to use jml_num_elec')
     jml_temperature = 0.d0
     call param_get_keyword('jml_temperature', found, r_value=jml_temperature)
+
+    jml_diagonal_tb = .false.
+    call param_get_keyword('jml_diagonal_tb', found, l_value=jml_diagonal_tb)
     ! END JML
 
     spin_moment = .false.
@@ -6497,6 +6501,7 @@ contains
     call comms_bcast(jml_only_inter_gap, 1)
     call comms_bcast(jml_num_elec, 1)
     call comms_bcast(jml_temperature, 1)
+    call comms_bcast(jml_diagonal_tb, 1)
     ! END JML
 
   end subroutine param_dist

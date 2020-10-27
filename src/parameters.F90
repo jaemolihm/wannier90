@@ -231,6 +231,7 @@ module w90_parameters
   integer, public, save :: jml_num_elec
   real(kind=dp), public, save :: jml_temperature
   logical, public, save :: jml_diagonal_tb
+  logical, public, save :: jml_debug_SS_R_zero
   ! END JML
 
   logical, public, save :: gyrotropic
@@ -1368,6 +1369,8 @@ contains
 
     jml_diagonal_tb = .false.
     call param_get_keyword('jml_diagonal_tb', found, l_value=jml_diagonal_tb)
+    jml_debug_SS_R_zero = .false.
+    call param_get_keyword('jml_debug_ss_r_zero', found, l_value=jml_debug_SS_R_zero)
     ! END JML
 
     spin_moment = .false.
@@ -6502,6 +6505,7 @@ contains
     call comms_bcast(jml_num_elec, 1)
     call comms_bcast(jml_temperature, 1)
     call comms_bcast(jml_diagonal_tb, 1)
+    call comms_bcast(jml_debug_SS_R_zero, 1)
     ! END JML
 
   end subroutine param_dist

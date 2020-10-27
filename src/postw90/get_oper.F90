@@ -1059,6 +1059,10 @@ contains
       timing_level, have_disentangled, spn_formatted
     use w90_postw90_common, only: nrpts, v_matrix, nrpts_pw90
 
+    ! DEBUG: Making SS_R nonzero only for R=0
+    use w90_parameters, only : jml_debug_SS_R_zero
+    use w90_postw90_common, only : irvec_pw90
+
     implicit none
 
     complex(kind=dp), allocatable :: spn_o(:, :, :, :), SS_q(:, :, :, :), &
@@ -1179,6 +1183,22 @@ contains
       do is = 1, 3
         call operator_wigner_setup(SS_R_temp(:, :, :, is), SS_R(:, :, :, is))
       enddo
+
+      ! DEBUG: Making SS_R nonzero only for R=0
+      if (jml_debug_SS_R_zero) then
+        do n = 1, nrpts_pw90
+          if (any(irvec_pw90(:, n) /= 0)) then
+            SS_R(:, :, n, :) = cmplx_0
+          else
+            inquire(iolength=ik) SS_R(:, :, 1, 1)
+            open(666, file='SS_R.bin', form='unformatted', access='direct', recl=ik)
+            do is = 1, 3
+              write(666, rec=is) SS_R(:, :, n, is)
+            enddo
+            close(666)
+          endif
+        enddo ! nrpts_pw90
+      endif ! jml_debug_SS_R_zero
 
     endif !on_root
 

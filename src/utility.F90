@@ -646,7 +646,6 @@ contains
 
     use w90_constants, only: dp, cmplx_0
     use w90_io, only: io_error, stdout, io_stopwatch
-    use w90_comms, only : on_root
 
     integer, intent(in)           :: dim
     complex(kind=dp), intent(in)  :: mat(dim, dim)
@@ -657,7 +656,7 @@ contains
     real(kind=dp)      :: rwork(7*dim)
     integer            :: i, j, info, nfound, iwork(5*dim), ifail(dim)
 
-    if (on_root) call io_stopwatch('utility: diagonalize', 1)
+    call io_stopwatch('utility: diagonalize', 1)
 
     do j = 1, dim
       do i = 1, j
@@ -677,7 +676,7 @@ contains
       call io_error('Error in utility_diagonalize')
     endif
 
-    if (on_root) call io_stopwatch('utility: diagonalize', 2)
+    call io_stopwatch('utility: diagonalize', 2)
 
   end subroutine utility_diagonalize
 
@@ -690,7 +689,6 @@ contains
     !                                                           !
     !===========================================================!
 
-    use w90_comms, only : on_root
     use w90_constants, only: dp
     use w90_io, only: io_stopwatch
 
@@ -699,11 +697,11 @@ contains
     complex(kind=dp) :: mat(dim, dim)
     complex(kind=dp) :: rot(dim, dim)
 
-    if (on_root) call io_stopwatch('utility: rotate', 1)
+    call io_stopwatch('utility: rotate', 1)
 
     utility_rotate = matmul(matmul(transpose(conjg(rot)), mat), rot)
 
-    if (on_root) call io_stopwatch('utility: rotate', 2)
+    call io_stopwatch('utility: rotate', 2)
 
   end function utility_rotate
 
@@ -719,7 +717,6 @@ contains
     !                                                              !
     !==============================================================!
 
-    use w90_comms, only : on_root
     use w90_constants, only: dp
     use w90_io, only: io_stopwatch
 
@@ -730,7 +727,7 @@ contains
     complex(kind=dp)                :: tmp(N, N)
     logical                         :: rev
 
-    if (on_root) call io_stopwatch('utility: rotate_new', 1)
+    call io_stopwatch('utility: rotate_new', 1)
 
     if (.not. present(reverse)) then
       rev = .false.
@@ -746,7 +743,7 @@ contains
       call utility_zgemm_new(tmp, rot, mat, 'C', 'N')
     end if
 
-    if (on_root) call io_stopwatch('utility: rotate_new', 1)
+    call io_stopwatch('utility: rotate_new', 1)
 
   end subroutine utility_rotate_new
 

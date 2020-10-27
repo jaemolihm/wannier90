@@ -165,6 +165,7 @@ contains
                          file_unit, ik, nk
     character(len=80) :: file_name
     logical           :: eval_ahc, eval_morb, eval_kubo, not_scannable, eval_sc, eval_shc
+    logical :: eval_nlspin
     logical           :: ladpt_kmesh
     logical           :: ladpt(nfermi)
 
@@ -184,11 +185,17 @@ contains
     eval_kubo = .false.
     eval_sc = .false.
     eval_shc = .false.
+    eval_nlspin = .false.
     if (index(berry_task, 'ahc') > 0) eval_ahc = .true.
     if (index(berry_task, 'morb') > 0) eval_morb = .true.
     if (index(berry_task, 'kubo') > 0) eval_kubo = .true.
     if (index(berry_task, 'sc') > 0) eval_sc = .true.
     if (index(berry_task, 'shc') > 0) eval_shc = .true.
+    if (index(berry_task, 'nlspin') > 0) eval_nlspin = .true.
+
+    if (eval_nlspin) then
+      eval_sc = .true.
+    endif
 
     ! Wannier matrix elements, allocations and initializations
     !
@@ -297,6 +304,12 @@ contains
         shc_k_fermi_dummy = 0.0_dp
         adpt_counter_list = 0
       endif
+    endif
+
+    if (eval_nlspin) then
+      call get_HH_R
+      call get_AA_R
+      call get_SS_R
     endif
 
     if (use_pwf_jml) then

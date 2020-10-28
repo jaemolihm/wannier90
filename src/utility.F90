@@ -743,7 +743,7 @@ contains
       call utility_zgemm_new(tmp, rot, mat, 'C', 'N')
     end if
 
-    call io_stopwatch('utility: rotate_new', 1)
+    call io_stopwatch('utility: rotate_new', 2)
 
   end subroutine utility_rotate_new
 

@@ -964,65 +964,96 @@ contains
 
     ! Arguments
     !
-    real(kind=dp)                                                  :: kpt(3)
-    complex(kind=dp), dimension(:, :, :), intent(in)               :: OO_R
-    complex(kind=dp), optional, dimension(:, :), intent(out)       :: OO
-    complex(kind=dp), optional, dimension(:, :, :), intent(out)    :: OO_da
-    complex(kind=dp), optional, dimension(:, :, :, :), intent(out) :: OO_dadb
+    real(kind=dp)                                        :: kpt(3)
+    complex(kind=dp), dimension(:, :, :), intent(in)     :: OO_R
+    complex(kind=dp), dimension(:, :), intent(out)       :: OO
+    complex(kind=dp), dimension(:, :, :), intent(out)    :: OO_da
+    complex(kind=dp), dimension(:, :, :, :), intent(out) :: OO_dadb
 
     integer          :: ir, i, j, a, b
     real(kind=dp)    :: rdotk
     complex(kind=dp) :: phase_fac
+    complex(kind=dp) :: phase_fac_centres(num_wann)
     real(kind=dp)    :: wannier_centres_frac(3, num_wann)
+    real(kind=dp)    :: wannier_centres_diff(3, num_wann, num_wann)
     real(kind=dp)    :: r_sum(3)
 
     if (timing_level > 2 .and. on_root) call io_stopwatch('fourier: R_to_k_new_second_d_TB_conv', 1)
 
-    r_sum = 0.d0
+    OO = cmplx_0
+    OO_da = cmplx_0
+    OO_dadb = cmplx_0
 
     ! rotate wannier centres from cartesian to fractional coordinates
     wannier_centres_frac(:, :) = 0.d0
-    do ir = 1, num_wann
-      call utility_cart_to_frac(wannier_centres_from_AA_R(:, ir), wannier_centres_frac(:, ir), recip_lattice)
+    do i = 1, num_wann
+      call utility_cart_to_frac(wannier_centres_from_AA_R(:, i), wannier_centres_frac(:, i), recip_lattice)
     enddo
 
-    if (present(OO)) OO = cmplx_0
-    if (present(OO_da)) OO_da = cmplx_0
-    if (present(OO_dadb)) OO_dadb = cmplx_0
+    do i = 1, num_wann
+      rdotk = twopi * dot_product(kpt(:), wannier_centres_frac(:, i))
+      phase_fac_centres(i) = cmplx(cos(rdotk), sin(rdotk), dp)
+    enddo
+
+    do j = 1, num_wann
+      do i = 1, num_wann
+        wannier_centres_diff(:, i, j) = wannier_centres_from_AA_R(:, j) - wannier_centres_from_AA_R(:, i)
+      enddo
+    enddo
 
     do ir = 1, nrpts_pw90
+      rdotk = twopi*dot_product(kpt(:), real(irvec_pw90(:, ir), dp))
+      phase_fac = cmplx(cos(rdotk), sin(rdotk), dp)
+
+      OO(:, :) = OO(:, :) + phase_fac*OO_R(:, :, ir)
+
+      do a = 1, 3
+        OO_da(:, :, a) = OO_da(:, :, a) + cmplx_i*crvec_pw90(a, ir)*phase_fac*OO_R(:, :, ir)
+      enddo
+
+      do b = 1, 3
+        do a = 1, 3
+          OO_dadb(:, :, a, b) = OO_dadb(:, :, a, b) - &
+                                crvec_pw90(a, ir)*crvec_pw90(b, ir)*phase_fac*OO_R(:, :, ir)
+        enddo
+      enddo
+
+    enddo ! ir
+
+    ! Apply centres-dependent phases of tight-binding convention
+    do j = 1, num_wann
+      do i = 1, num_wann
+        OO(i, j) = OO(i, j) * CONJG(phase_fac_centres(i)) * phase_fac_centres(j)
+      enddo
+    enddo
+
+    do a = 1, 3
       do j = 1, num_wann
         do i = 1, num_wann
+          OO_da(i, j, a) = OO_da(i, j, a) &
+          * CONJG(phase_fac_centres(i)) * phase_fac_centres(j)
 
-          r_sum(:) = real(irvec_pw90(:, ir), dp) + wannier_centres_frac(:, j) - wannier_centres_frac(:, i)
-          rdotk = twopi*dot_product(kpt(:), r_sum(:))
-          phase_fac = cmplx(cos(rdotk), sin(rdotk), dp)
+          OO_da(i, j, a) = OO_da(i, j, a) &
+          + cmplx_i * OO(i, j) * wannier_centres_diff(a, i, j)
+        enddo ! j
+      enddo ! i
+    enddo ! a
 
-          if (present(OO)) OO(i, j) = OO(i, j) + phase_fac*OO_R(i, j, ir)
+    do b = 1, 3
+      do a = 1, 3
+        do i = 1, num_wann
+          do j = 1, num_wann
+            OO_dadb(i, j, a, b) = OO_dadb(i, j, a, b) &
+            * CONJG(phase_fac_centres(i)) * phase_fac_centres(j)
 
-          if (present(OO_da)) then
-            do a = 1, 3
-              OO_da(i, j, a) = OO_da(i, j, a) + cmplx_i* &
-                               (crvec_pw90(a, ir) + wannier_centres_from_AA_R(a, j) - &
-                                wannier_centres_from_AA_R(a, i))*phase_fac*OO_R(i, j, ir)
-            enddo
-          endif
-
-          if (present(OO_dadb)) then
-            do a = 1, 3
-              do b = 1, 3
-                OO_dadb(i, j, a, b) = OO_dadb(i, j, a, b) - &
-                                      (crvec_pw90(a, ir) + wannier_centres_from_AA_R(a, j) - &
-                                       wannier_centres_from_AA_R(a, i))* &
-                                      (crvec_pw90(b, ir) + wannier_centres_from_AA_R(b, j) - &
-                                       wannier_centres_from_AA_R(b, i))*phase_fac*OO_R(i, j, ir)
-              enddo
-            enddo
-          end if
-
+            OO_dadb(i, j, a, b) = OO_dadb(i, j, a, b) &
+            + cmplx_i * OO_da(i, j, b) * wannier_centres_diff(a, i, j) &
+            + cmplx_i * OO_da(i, j, a) * wannier_centres_diff(b, i, j) &
+            + OO(i, j) * wannier_centres_diff(a, i, j) * wannier_centres_diff(b, i, j)
+          enddo ! j
         enddo ! i
-      enddo ! j
-    enddo ! ir
+      enddo ! a
+    enddo ! b
 
     if (timing_level > 2 .and. on_root) call io_stopwatch('fourier: R_to_k_new_second_d_TB_conv', 2)
 

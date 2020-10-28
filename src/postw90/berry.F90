@@ -2145,7 +2145,7 @@ contains
     real(kind=dp), allocatable    :: occ(:)
 
     complex(kind=dp)              :: sum_AD(3, 3), sum_HD(3, 3), r_mn(3), gen_r_nm(3), &
-      delta_complex(kubo_nfreq), I_mn(3, 4, 3, 3)
+      omega_fac(kubo_nfreq), I_mn(3, 4, 3, 3)
     integer                       :: a, b, c, bc, n, m, istart, iend, alpha, beta, ispin, itype
     real(kind=dp)                 :: omega(kubo_nfreq), delta(kubo_nfreq), joint_level_spacing, &
                                      eta_smr, Delta_k, vdum(3), occ_fac, wstep, wmin, wmax, deltaE
@@ -2326,8 +2326,8 @@ contains
           delta = 0.0
           delta(istart:iend) = &
             utility_w0gauss_vec((eig(m) - eig(n) + omega(istart:iend))/eta_smr, kubo_smr_index)/eta_smr
-          delta_complex = delta
-          call ZGERU(108, iend - istart + 1, cmplx_1, I_mn, 1, delta_complex(istart:iend), 1, &
+          omega_fac = delta
+          call ZGERU(108, iend - istart + 1, cmplx_1, I_mn, 1, omega_fac(istart:iend), 1, &
             nlspin_k_list(:, :, :, :, istart:iend, itype), 108)
         endif
 
@@ -2374,8 +2374,8 @@ contains
           delta = 0.0
           delta(istart:iend) = &
             utility_w0gauss_vec((eig(m) - eig(n) + omega(istart:iend))/eta_smr, kubo_smr_index)/eta_smr
-          delta_complex = delta
-          call ZGERU(108, iend - istart + 1, cmplx_1, I_mn, 1, delta_complex(istart:iend), 1, &
+          omega_fac = delta
+          call ZGERU(108, iend - istart + 1, cmplx_1, I_mn, 1, omega_fac(istart:iend), 1, &
             nlspin_k_list(:, :, :, :, istart:iend, itype), 108)
         endif
 
@@ -2383,7 +2383,66 @@ contains
     enddo ! bands
     if (timing_level > 2 .and. on_root) call io_stopwatch('berry_nlspin: injection', 2)
 
+    ! Fermi surface contribution: itype = 3
+    itype = 3
 
+    if (timing_level > 2 .and. on_root) call io_stopwatch('berry_nlspin: fermi', 1)
+    ! loop on initial and final bands
+    do n = 1, num_wann
+      do m = 1, num_wann
+        ! cycle diagonal matrix elements and bands above the maximum
+        if (n == m) cycle
+        if (eig(m) > kubo_eigval_max .or. eig(n) > kubo_eigval_max) cycle
+        ! setup T=0 occupation factors
+        occ_fac = occ(m) - occ(n)
+        if (abs(occ_fac) < 1e-10) cycle
+
+        eta_smr = kubo_smr_fixed_en_width
+
+        ! TODO: Add first and second terms (Drude, Berry curvature dipole)
+        !       These terms are zero in insulators and cold semiconductors.
+
+        ! Third term: 1 / (omega + e_mn)
+        ! I_mn(a, s, b, c) = (occ(m) - occ(n)) / (eig(m) - eig(n))**2 *
+        !  (HH_da(n, m, b) * djvk(m, n, c, a, s) + djvk(n, m, b, a, s) * HH_da(m, n, c)
+        !   - 2 * delta_jvk(m, n, a, s) * HH_da(n, m, b) * HH_da(m, n, c) / (eig(m) - eig(n)))
+        I_mn = cmplx_0
+        do c = 1, 3
+          do b = 1, 3
+            I_mn(:, :, b, c) = HH_da(n, m, b) * djvk(m, n, c, :, :) &
+                             + djvk(n, m, b, :, :) * HH_da(m, n, c) &
+                             - 2.d0 * delta_jvk(m, n, :, :) * HH_da(n, m, b) &
+                              * HH_da(m, n, c) / (eig(m) - eig(n))
+          enddo
+        enddo
+        I_mn = I_mn * occ_fac / (eig(m) - eig(n))**2
+
+        ! Add I_mn * ((w+e_mn)**2 - eta_smr**2) / ((w+e_mn)**2 + eta_smr**2)**2
+        delta = eig(m) - eig(n) + omega
+        omega_fac = delta / (delta**2 + eta_smr**2)
+        call ZGERU(108, kubo_nfreq, cmplx_1, I_mn, 1, omega_fac, 1, &
+            nlspin_k_list(:, :, :, :, :, itype), 108)
+
+        ! Fourth term: 1 / (omega + e_mn)**2
+        ! I_mn(a, ispin, b, c) = -(occ(m) - occ(n)) * delta_jvk(m, n, a, s)
+        !                      * vk(n, m, b) * vk(m, n, c) / (eig(m) - eig(n))**2
+        I_mn = cmplx_0
+        do c = 1, 3
+          do b = 1, 3
+            I_mn(:, :, b, c) = -delta_jvk(m, n, :, :) * HH_da(n, m, b) * HH_da(m, n, c)
+          enddo
+        enddo
+        I_mn = I_mn * occ_fac / (eig(m) - eig(n))**2
+
+        ! Add I_mn * ((w+e_mn)**2 - eta_smr**2) / ((w+e_mn)**2 + eta_smr**2)**2
+        delta = eig(m) - eig(n) + omega
+        omega_fac = (delta**2 - eta_smr**2) / (delta**2 + eta_smr**2)**2
+        call ZGERU(108, kubo_nfreq, cmplx_1, I_mn, 1, omega_fac, 1, &
+            nlspin_k_list(:, :, :, :, :, itype), 108)
+
+      enddo ! bands
+    enddo ! bands
+    if (timing_level > 2 .and. on_root) call io_stopwatch('berry_nlspin: fermi', 2)
 
   end subroutine berry_get_nlspin_klist
 

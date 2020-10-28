@@ -2144,6 +2144,7 @@ contains
     real(kind=dp), allocatable    :: eig(:)
     real(kind=dp), allocatable    :: occ(:)
 
+    logical :: tb_conv
     complex(kind=dp)              :: sum_AD(3, 3), sum_HD(3, 3), r_mn(3), gen_r_nm(3), &
       omega_fac(kubo_nfreq), I_mn(3, 4, 3, 3)
     integer                       :: a, b, c, bc, n, m, istart, iend, alpha, beta, ispin, itype
@@ -2170,21 +2171,28 @@ contains
     ! Initialize shift current array at point k
     nlspin_k_list = cmplx_0
 
+    tb_conv = .false.
+    if (sc_phase_conv == 1) then
+      tb_conv = .true.
+    else
+      call io_error('berry_get_nlspin_klist with sc_phase_conv = 2 not implemented')
+    endif
+
     ! Gather W-gauge matrix objects
     ! choose the convention for the FT sums
-    if (sc_phase_conv .eq. 1) then
+    if (tb_conv) then
       ! use Wannier centres in the FT exponentials (so called TB convention)
       call pw90common_fourier_R_to_k_new_second_d_TB_conv(kpt, HH_R, OO=HH, &
                                                         OO_da=HH_da(:, :, :), &
                                                         OO_dadb=HH_dadb(:, :, :, :))
       call utility_diagonalize(HH, num_wann, eig, UU)
-    elseif (sc_phase_conv .eq. 2) then
+    else
       ! do not use Wannier centres in the FT exponentials (usual W90 convention)
       call io_error('berry_get_nlspin_klist with sc_phase_conv = 2 not implemented')
     end if
 
     ! Get spin matrix elements
-    call pw90common_fourier_R_to_k_vec(kpt, SS_R, OO_true=S_k)
+    call pw90common_fourier_R_to_k_vec(kpt, SS_R, OO_true=S_k, tb_conv=tb_conv)
     do ispin = 1, 3
       call utility_rotate_new(S_k(:, :, ispin), UU, num_wann)
     enddo

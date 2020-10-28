@@ -1060,7 +1060,7 @@ contains
   end subroutine pw90common_fourier_R_to_k_new_second_d_TB_conv
 
   !=========================================================!
-  subroutine pw90common_fourier_R_to_k_vec(kpt, OO_R, OO_true, OO_pseudo)
+  subroutine pw90common_fourier_R_to_k_vec(kpt, OO_R, OO_true, OO_pseudo, tb_conv)
     !====================================================================!
     !                                                                    !
     !! For OO_true (true vector):
@@ -1070,23 +1070,31 @@ contains
 
     use w90_constants, only: dp, cmplx_0, cmplx_i, twopi, cmplx_1
     use w90_io, only: io_stopwatch
-    use w90_parameters, only: timing_level, num_wann
+    use w90_parameters, only: timing_level, num_wann, recip_lattice
+    use w90_utility, only: utility_cart_to_frac
 
     implicit none
 
     ! Arguments
     !
+    logical, optional :: tb_conv
     real(kind=dp)                                     :: kpt(3)
     complex(kind=dp), dimension(:, :, :, :), intent(in)  :: OO_R
     complex(kind=dp), optional, dimension(:, :, :), intent(out) :: OO_true
     complex(kind=dp), optional, dimension(:, :, :), intent(out) :: OO_pseudo
 
-    integer          :: ir, a
+    logical :: use_tb_conv
+    integer          :: ir, a, i, j
     real(kind=dp)    :: rdotk
+    real(kind=dp)    :: wannier_centres_frac(3, num_wann)
     complex(kind=dp) :: phase_fac(nrpts_pw90)
     complex(kind=dp) :: crvec_phase_fac(nrpts_pw90, 3)
+    complex(kind=dp) :: phase_fac_centres(num_wann)
 
     if (timing_level > 2 .and. on_root) call io_stopwatch('fourier: R_to_k_vec', 1)
+
+    use_tb_conv = .false.
+    if (present(tb_conv)) use_tb_conv = tb_conv
 
     if (present(OO_true)) OO_true = cmplx_0
     if (present(OO_pseudo)) OO_pseudo = cmplx_0
@@ -1159,6 +1167,38 @@ contains
 
     enddo
     if (timing_level > 3 .and. on_root) call io_stopwatch('fourier: R_to_k_vec_mul', 2)
+
+    if (use_tb_conv) then
+      ! Apply centres-dependent phases of tight-binding convention
+
+      wannier_centres_frac(:, :) = 0.d0
+      do i = 1, num_wann
+        ! rotate wannier centres from cartesian to fractional coordinates
+        call utility_cart_to_frac(wannier_centres_from_AA_R(:, i), wannier_centres_frac(:, i), recip_lattice)
+
+        rdotk = twopi * dot_product(kpt(:), wannier_centres_frac(:, i))
+        phase_fac_centres(i) = cmplx(cos(rdotk), sin(rdotk), dp)
+      enddo
+
+      do a = 1, 3
+        do j = 1, num_wann
+          do i = 1, num_wann
+            if (present(OO_true)) then
+              OO_true(i, j, a) = OO_true(i, j, a) &
+              * CONJG(phase_fac_centres(i)) * phase_fac_centres(j)
+            endif
+
+            if (present(OO_pseudo)) then
+              OO_pseudo(i, j, a) = OO_pseudo(i, j, a) &
+              * CONJG(phase_fac_centres(i)) * phase_fac_centres(j)
+            endif
+
+          enddo ! j
+        enddo ! i
+      enddo ! a
+
+    endif ! use_tb_conv
+
 
     if (timing_level > 2 .and. on_root) call io_stopwatch('fourier: R_to_k_vec', 2)
 

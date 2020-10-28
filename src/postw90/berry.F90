@@ -2139,7 +2139,7 @@ contains
     complex(kind=dp), allocatable :: HH_dadb(:, :, :, :)
     complex(kind=dp), allocatable :: HH(:, :)
     complex(kind=dp), allocatable :: jvk(:, :, :, :), jwk(:, :, :, :, :), &
-      diag_jvk(:, :, :), delta_jvk(:, :, :, :)
+      diag_jvk(:, :, :), delta_jvk(:, :, :, :), djvk(:, :, :, :, :), jD_h(:, :, :, :)
     complex(kind=dp), allocatable :: temp_mat(:, :)
     real(kind=dp), allocatable    :: eig(:)
     real(kind=dp), allocatable    :: occ(:)
@@ -2148,7 +2148,7 @@ contains
       delta_complex(kubo_nfreq), I_mn(3, 4, 3, 3)
     integer                       :: a, b, c, bc, n, m, istart, iend, alpha, beta, ispin, itype
     real(kind=dp)                 :: omega(kubo_nfreq), delta(kubo_nfreq), joint_level_spacing, &
-                                     eta_smr, Delta_k, vdum(3), occ_fac, wstep, wmin, wmax
+                                     eta_smr, Delta_k, vdum(3), occ_fac, wstep, wmin, wmax, deltaE
 
     if (kubo_adpt_smr) call io_error('berry_get_nlspin_klist with kubo_adpt_smr = true not implemented')
 
@@ -2163,6 +2163,8 @@ contains
     allocate (jwk(num_wann, num_wann, 3, 3, 4))
     allocate (diag_jvk(num_wann, 3, 4))
     allocate (delta_jvk(num_wann, num_wann, 3, 4))
+    allocate (jD_h(num_wann, num_wann, 3, 4))
+    allocate (djvk(num_wann, num_wann, 3, 3, 4))
     allocate (temp_mat(num_wann, num_wann))
 
     ! Initialize shift current array at point k
@@ -2242,7 +2244,40 @@ contains
       enddo
     enddo
 
-    ! TODO: Compute generalized spin-derivative of velocity matrix
+    ! Compute jD_h
+    ! jD_h(m, n, a, s) = jvk(m, n, a, s) * Re[1 / (eig(n) - eig(m) + i * sc_eta)]
+    jD_h = cmplx_0
+    deltaE = 0.d0
+    do ispin = 1, 4
+      do a = 1, 3
+        do n = 1, num_wann
+          do m = 1, num_wann
+            if (n == m) cycle
+            deltaE = eig(n) - eig(m)
+            jD_h(m, n, a, ispin) = jvk(m, n, a, ispin) * deltaE / (deltaE**2 + sc_eta**2)
+          enddo
+        enddo
+      enddo ! a
+    enddo ! ispin
+
+    ! Compute generalized spin-derivative of velocity matrix
+    ! djvk(m, n, b, a, s) = jwk(m, n, b, a, s)
+    !   + sum_p HH_da(m, p, b) * jvk(p, n, a, s) / (eig(n) - eig(p))
+    !   + sum_p jvk(m, p, a, s) * HH_da(p, n, b) / (eig(m) - eig(p))
+    ! = jwk(m, n, b, a, s)
+    !   + sum_p HH_da(m, p, b) * jD_h(p, n, a, s)
+    !   - sum_p jD_h(m, p, a, s) * HH_da(p, n, b)
+    djvk = jwk
+    do ispin = 1, 4
+      do a = 1, 3
+        do b = 1, 3
+          call utility_zgemm_new(HH_da(:, :, b), jD_h(:, :, a, ispin), temp_mat, 'N', 'N')
+          djvk(:, :, b, a, ispin) = djvk(:, :, b, a, ispin) + temp_mat
+          call utility_zgemm_new(jD_h(:, :, a, ispin), HH_da(:, :, b), temp_mat, 'N', 'N')
+          djvk(:, :, b, a, ispin) = djvk(:, :, b, a, ispin) - temp_mat
+        enddo
+      enddo
+    enddo
 
     ! setup for frequency-related quantities
     omega = real(kubo_freq_list(:), dp)
@@ -2250,10 +2285,60 @@ contains
     wmax = omega(kubo_nfreq)
     wstep = omega(2) - omega(1)
 
-    if (timing_level > 2 .and. on_root) call io_stopwatch('berry_nlspin: injection', 1)
+    ! shift current: itype = 1
+    itype = 1
+
+    if (timing_level > 2 .and. on_root) call io_stopwatch('berry_nlspin: shift', 1)
+    ! loop on initial and final bands
+    do n = 1, num_wann
+      do m = 1, num_wann
+        ! cycle diagonal matrix elements and bands above the maximum
+        if (n == m) cycle
+        if (eig(m) > kubo_eigval_max .or. eig(n) > kubo_eigval_max) cycle
+        ! setup T=0 occupation factors
+        occ_fac = occ(m) - occ(n)
+        if (abs(occ_fac) < 1e-10) cycle
+
+        eta_smr = kubo_smr_fixed_en_width
+
+        ! restrict to energy window spanning [-sc_w_thr*eta_smr,+sc_w_thr*eta_smr]
+        ! outside this range, the two delta functions are virtually zero
+        if ((eig(m) - eig(n) + wmin > sc_w_thr*eta_smr) .or. &
+            (eig(m) - eig(n) + wmax < -sc_w_thr*eta_smr)) cycle
+
+        ! I_shift(a, ispin, b, c) = (occ(m) - occ(n)) *
+        !  (HH_da(n, m, b) * djvk(m, n, c, a, ispin) - djvk(n, m, b, a, s) * HH_da(m, n, c))
+        I_mn = cmplx_0
+        do c = 1, 3
+          do b = 1, 3
+            I_mn(:, :, b, c) = HH_da(n, m, b) * djvk(m, n, c, :, :) &
+                             - djvk(n, m, b, :, :) * HH_da(m, n, c)
+          enddo
+        enddo
+        I_mn = I_mn * occ_fac
+
+        ! compute delta(E_nm - w) = delta(E_mn + w)
+        ! choose energy window spanning [-sc_w_thr*eta_smr,+sc_w_thr*eta_smr]
+        istart = max(int((eig(n) - eig(m) - sc_w_thr*eta_smr - wmin)/wstep + 1), 1)
+        iend = min(int((eig(n) - eig(m) + sc_w_thr*eta_smr - wmin)/wstep + 1), kubo_nfreq)
+        ! multiply matrix elements with delta function for the relevant frequencies
+        if (istart <= iend) then
+          delta = 0.0
+          delta(istart:iend) = &
+            utility_w0gauss_vec((eig(m) - eig(n) + omega(istart:iend))/eta_smr, kubo_smr_index)/eta_smr
+          delta_complex = delta
+          call ZGERU(108, iend - istart + 1, cmplx_1, I_mn, 1, delta_complex(istart:iend), 1, &
+            nlspin_k_list(:, :, :, :, istart:iend, itype), 108)
+        endif
+
+      enddo ! bands
+    enddo ! bands
+    if (timing_level > 2 .and. on_root) call io_stopwatch('berry_nlspin: shift', 2)
 
     ! Injection current: itype = 2
     itype = 2
+
+    if (timing_level > 2 .and. on_root) call io_stopwatch('berry_nlspin: injection', 1)
     ! loop on initial and final bands
     do n = 1, num_wann
       do m = 1, num_wann
@@ -2296,8 +2381,8 @@ contains
 
       enddo ! bands
     enddo ! bands
-
     if (timing_level > 2 .and. on_root) call io_stopwatch('berry_nlspin: injection', 2)
+
 
 
   end subroutine berry_get_nlspin_klist

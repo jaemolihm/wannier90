@@ -110,7 +110,7 @@ contains
       kubo_adpt_smr_max, kubo_smr_fixed_en_width, &
       scissors_shift, num_valence_bands, &
       shc_bandshift, shc_bandshift_firstband, shc_bandshift_energyshift, &
-      use_pwf_jml, spinors
+      use_pwf_jml, spinors, jml_nlspin_tetra
     use w90_get_oper, only: get_HH_R, get_AA_R, get_BB_R, get_CC_R, &
       get_SS_R, get_SHC_R, get_vel_r_pwf_jml, get_omega_r_pwf_jml, &
       get_dsuru_r_pwf_jml, get_dvel_r_pwf_jml
@@ -661,7 +661,11 @@ contains
         if (eval_nlspin) then
           call berry_print_progress(loop_xyz, my_node_id, PRODUCT(berry_kmesh) - 1, num_nodes)
 
-          call berry_get_nlspin_klist(kpt, nlspin_k_list, loop_xyz)
+          if (jml_nlspin_tetra) then
+            call berry_get_nlspin_klist_tetra(kpt, nlspin_k_list, loop_xyz)
+          else
+            call berry_get_nlspin_klist(kpt, nlspin_k_list, loop_xyz)
+          endif
           nlspin_list = nlspin_list + nlspin_k_list * kweight
         end if
 
@@ -1321,7 +1325,11 @@ contains
         enddo
 
         inquire(iolength=ik) nlspin_list
-        open(666, file='nlspin_list.bin', form='unformatted', access='direct', recl=ik)
+        if (jml_nlspin_tetra) then
+          open(666, file='nlspin_list_tetra.bin', form='unformatted', access='direct', recl=ik)
+        else
+          open(666, file='nlspin_list.bin', form='unformatted', access='direct', recl=ik)
+        endif
         write(666, rec=1) nlspin_list
         close(666)
 
@@ -2453,6 +2461,433 @@ contains
     if (timing_level > 2 .and. on_root) call io_stopwatch('berry_nlspin: fermi', 2)
 
   end subroutine berry_get_nlspin_klist
+
+  subroutine berry_get_nlspin_klist_tetra(kpt, nlspin_k_list, ik)
+    !====================================================================!
+    !                                                                    !
+    !  Contribution from point k to the nonlinear spin current
+    !
+    !  Use poor man's tetrahedron method: trilinear interpolation.
+    !
+    !  nlspin_k_list(a, ispin, b, c, iomega, itype)
+    !  itype = 1: spin shift current
+    !  itype = 2: spin injection current
+    !  itype = 3: Fermi-surface currents
+    !  (Intrinsic Fermi surface + Berry curvature dipole + Drude)
+    !                                                                    !
+    !====================================================================!
+
+    ! Arguments
+    !
+    use w90_constants, only: dp, cmplx_0, cmplx_i, cmplx_1
+    use w90_comms, only : on_root
+    use w90_io, only: io_error, io_stopwatch
+    use w90_parameters, only: num_wann, kubo_nfreq, kubo_freq_list, fermi_energy_list, &
+      kubo_smr_index, berry_kmesh, kubo_adpt_smr_fac, &
+      kubo_adpt_smr_max, kubo_adpt_smr, kubo_eigval_max, &
+      kubo_smr_fixed_en_width, sc_phase_conv, sc_w_thr, use_pwf_jml, spinors, wanint_kpoint_file, &
+      sc_eta, timing_level, jml_tetra_nk, jml_tetra_cutoff
+    use w90_postw90_common, only: pw90common_fourier_R_to_k_new_second_d_TB_conv, &
+      pw90common_get_occ, pw90common_fourier_R_to_k_vec
+    ! use w90_wan_ham, only: wham_get_eig_UU_HH_JJlist, wham_get_occ_mat_list, wham_get_D_h, &
+    !   wham_get_eig_UU_HH_AA_sc, wham_get_eig_deleig, wham_get_D_h_P_value, &
+    !   wham_get_eig_deleig_TB_conv, wham_get_eig_UU_HH_AA_sc_TB_conv
+    use w90_get_oper, only: HH_R, SS_R
+    use w90_utility, only: utility_rotate_new, utility_zdotu, utility_diagonalize, &
+      utility_zgemm_new, utility_w0gauss_vec
+    ! Arguments
+    !
+    real(kind=dp), intent(in) :: kpt(3)
+    complex(kind=dp), intent(out), dimension(:, :, :, :, :, :) :: nlspin_k_list
+    integer, intent(in) :: ik
+
+    complex(kind=dp), allocatable :: UU(:, :)
+    complex(kind=dp), allocatable :: S_k(:, :, :)
+    complex(kind=dp), allocatable :: HH_da(:, :, :)
+    complex(kind=dp), allocatable :: HH_dadb(:, :, :, :)
+    complex(kind=dp), allocatable :: HH(:, :)
+    complex(kind=dp), allocatable :: jvk(:, :, :, :), jwk(:, :, :, :, :), &
+      diag_jvk(:, :, :), delta_jvk(:, :, :, :), djvk(:, :, :, :, :), jD_h(:, :, :, :)
+    complex(kind=dp), allocatable :: temp_mat(:, :)
+    complex(kind=dp), allocatable :: I_fermi_3_all(:, :, :, :, :, :, :), I_fermi_4_all(:, :, :, :, :, :, :)
+    real(kind=dp), allocatable    :: eig(:)
+    real(kind=dp), allocatable    :: occ(:)
+    real(kind=dp), allocatable :: eigs(:, :), occs(:, :)
+    logical, allocatable :: use_tetra(:, :)
+
+    logical :: tb_conv
+    real(kind=dp) :: kpt_new(3), kpt_delta(3, 9)
+    complex(kind=dp)              :: sum_AD(3, 3), sum_HD(3, 3), r_mn(3), gen_r_nm(3), &
+      omega_fac(kubo_nfreq), I_mn_3(3, 4, 3, 3), I_mn_4(3, 4, 3, 3)
+    integer                       :: a, b, c, bc, n, m, istart, iend, alpha, beta, ispin, itype, idelta
+    real(kind=dp)                 :: omega(kubo_nfreq), delta(kubo_nfreq), joint_level_spacing, &
+                                     eta_smr, Delta_k, vdum(3), occ_fac, wstep, wmin, wmax, deltaE
+
+    integer :: ik_tetra, tetra_nk(3), loop_ik(3)
+    real(kind=dp) :: dk(3), fac_tetra(8), fac
+
+    if (kubo_adpt_smr) call io_error('berry_get_nlspin_klist_tetra with kubo_adpt_smr = true not implemented')
+
+    allocate (UU(num_wann, num_wann))
+    allocate (HH_da(num_wann, num_wann, 3))
+    allocate (HH_dadb(num_wann, num_wann, 3, 3))
+    allocate (HH(num_wann, num_wann))
+    allocate (eig(num_wann))
+    allocate (occ(num_wann))
+    allocate (S_k(num_wann, num_wann, 3))
+    allocate (jvk(num_wann, num_wann, 3, 4))
+    allocate (jwk(num_wann, num_wann, 3, 3, 4))
+    allocate (diag_jvk(num_wann, 3, 4))
+    allocate (delta_jvk(num_wann, num_wann, 3, 4))
+    allocate (jD_h(num_wann, num_wann, 3, 4))
+    allocate (djvk(num_wann, num_wann, 3, 3, 4))
+    allocate (temp_mat(num_wann, num_wann))
+    allocate (I_fermi_3_all(3, 4, 3, 3, num_wann, num_wann, 9))
+    allocate (I_fermi_4_all(3, 4, 3, 3, num_wann, num_wann, 9))
+    allocate (eigs(num_wann, 9))
+    allocate (occs(num_wann, 9))
+    allocate (use_tetra(num_wann, num_wann))
+
+    ! Initialize shift current array at point k
+    nlspin_k_list = cmplx_0
+
+    ! Size of subgrids for poor man's tetrahedron interpolation
+    tetra_nk = (/ jml_tetra_nk, jml_tetra_nk, jml_tetra_nk /)
+
+    tb_conv = .false.
+    if (sc_phase_conv == 1) then
+      tb_conv = .true.
+    else
+      call io_error('berry_get_nlspin_klist_tetra with sc_phase_conv = 2 not implemented')
+    endif
+
+    kpt_delta(:, :) = 0.d0
+
+    kpt_delta(1, 2) = 1.0_dp / real(berry_kmesh(1), dp)
+    kpt_delta(1, 4) = 1.0_dp / real(berry_kmesh(1), dp)
+    kpt_delta(1, 6) = 1.0_dp / real(berry_kmesh(1), dp)
+    kpt_delta(1, 8) = 1.0_dp / real(berry_kmesh(1), dp)
+
+    kpt_delta(2, 3) = 1.0_dp / real(berry_kmesh(2), dp)
+    kpt_delta(2, 4) = 1.0_dp / real(berry_kmesh(2), dp)
+    kpt_delta(2, 7) = 1.0_dp / real(berry_kmesh(2), dp)
+    kpt_delta(2, 8) = 1.0_dp / real(berry_kmesh(2), dp)
+
+    kpt_delta(3, 5) = 1.0_dp / real(berry_kmesh(3), dp)
+    kpt_delta(3, 6) = 1.0_dp / real(berry_kmesh(3), dp)
+    kpt_delta(3, 7) = 1.0_dp / real(berry_kmesh(3), dp)
+    kpt_delta(3, 8) = 1.0_dp / real(berry_kmesh(3), dp)
+
+    kpt_delta(1, :) = kpt_delta(1, :) - 0.5_dp / real(berry_kmesh(1), dp)
+    kpt_delta(2, :) = kpt_delta(2, :) - 0.5_dp / real(berry_kmesh(2), dp)
+    kpt_delta(3, :) = kpt_delta(3, :) - 0.5_dp / real(berry_kmesh(3), dp)
+    kpt_delta(:, 9) = 0.d0
+
+    ! Compute matrix elements at 8 k points on the vertices of the cube
+    I_fermi_3_all = cmplx_0
+    I_fermi_4_all = cmplx_0
+
+    if (timing_level > 2 .and. on_root) call io_stopwatch('berry_nlspin_tetra: mel', 1)
+
+    do idelta = 1, 9
+      kpt_new = kpt + kpt_delta(:, idelta)
+
+      ! Gather W-gauge matrix objects
+      ! choose the convention for the FT sums
+      if (tb_conv) then
+        ! use Wannier centres in the FT exponentials (so called TB convention)
+        call pw90common_fourier_R_to_k_new_second_d_TB_conv(kpt_new, HH_R, OO=HH, &
+                                                          OO_da=HH_da(:, :, :), &
+                                                          OO_dadb=HH_dadb(:, :, :, :))
+        call utility_diagonalize(HH, num_wann, eig, UU)
+      else
+        ! do not use Wannier centres in the FT exponentials (usual W90 convention)
+        call io_error('berry_get_nlspin_klist_tetra with sc_phase_conv = 2 not implemented')
+      end if
+
+      ! Get spin matrix elements
+      call pw90common_fourier_R_to_k_vec(kpt_new, SS_R, OO_true=S_k, tb_conv=tb_conv)
+      do ispin = 1, 3
+        call utility_rotate_new(S_k(:, :, ispin), UU, num_wann)
+      enddo
+
+      ! get electronic occupations
+      call pw90common_get_occ(eig, occ, fermi_energy_list(1))
+
+      eigs(:, idelta) = eig
+      occs(:, idelta) = occ
+
+      ! rotate quantities from W to H gauge
+      do a = 1, 3
+        ! first derivative of Hamiltonian dH_da
+        call utility_rotate_new(HH_da(:, :, a), UU, num_wann)
+        do b = 1, 3
+          ! second derivative of Hamiltonian d^{2}H_dadb
+          call utility_rotate_new(HH_dadb(:, :, a, b), UU, num_wann)
+        enddo
+      enddo
+
+      ! Compute spin-velocity matrices
+      ! ispin = 1, 2, 3: spin x, y, z
+      ! ispin = 4: charge
+      jvk = cmplx_0
+      jwk = cmplx_0
+
+      do ispin = 1, 3
+        do a = 1, 3
+          call utility_zgemm_new(S_k(:, :, ispin), HH_da(:, :, a), temp_mat, 'N', 'N')
+          call utility_zgemm_new(HH_da(:, :, a), S_k(:, :, ispin), jvk(:, :, a, ispin), 'N', 'N')
+          jvk(:, :, a, ispin) = jvk(:, :, a, ispin) + temp_mat
+
+          do b = 1, 3
+            call utility_zgemm_new(S_k(:, :, ispin), HH_dadb(:, :, b, a), temp_mat, 'N', 'N')
+            call utility_zgemm_new(HH_dadb(:, :, b, a), S_k(:, :, ispin), jwk(:, :, b, a, ispin), 'N', 'N')
+            jwk(:, :, b, a, ispin) = jwk(:, :, b, a, ispin) + temp_mat
+          enddo ! b
+        enddo ! a
+      enddo ! ispin
+      jvk = jvk / 2.0_dp
+      jwk = jwk / 2.0_dp
+
+      jvk(:, :, :, 4) = HH_da(:, :, :)
+      jwk(:, :, :, :, 4) = HH_dadb(:, :, :, :)
+
+      ! Compute diagonal velocity matrix elements
+      ! diag_jvk(m) = jvk(m, m)
+      ! delta_jvk(n, m) = jvk(n, n)- jvk(m, m)
+      do ispin = 1, 4
+        do a = 1, 3
+          do m = 1, num_wann
+            diag_jvk(m, a, ispin) = jvk(m, m, a, ispin)
+          enddo
+
+          do m = 1, num_wann
+            do n = 1, num_wann
+              delta_jvk(n, m, a, ispin) = diag_jvk(n, a, ispin) - diag_jvk(m, a, ispin)
+            enddo
+          enddo
+        enddo
+      enddo
+
+      ! Compute jD_h
+      ! jD_h(m, n, a, s) = jvk(m, n, a, s) * Re[1 / (eig(n) - eig(m) + i * sc_eta)]
+      jD_h = cmplx_0
+      deltaE = 0.d0
+      do ispin = 1, 4
+        do a = 1, 3
+          do n = 1, num_wann
+            do m = 1, num_wann
+              if (n == m) cycle
+              deltaE = eig(n) - eig(m)
+              jD_h(m, n, a, ispin) = jvk(m, n, a, ispin) * deltaE / (deltaE**2 + sc_eta**2)
+            enddo
+          enddo
+        enddo ! a
+      enddo ! ispin
+
+      ! Compute generalized spin-derivative of velocity matrix
+      ! djvk(m, n, b, a, s) = jwk(m, n, b, a, s)
+      !   + sum_p HH_da(m, p, b) * jvk(p, n, a, s) / (eig(n) - eig(p))
+      !   + sum_p jvk(m, p, a, s) * HH_da(p, n, b) / (eig(m) - eig(p))
+      ! = jwk(m, n, b, a, s)
+      !   + sum_p HH_da(m, p, b) * jD_h(p, n, a, s)
+      !   - sum_p jD_h(m, p, a, s) * HH_da(p, n, b)
+      djvk = jwk
+      do ispin = 1, 4
+        do a = 1, 3
+          do b = 1, 3
+            call utility_zgemm_new(HH_da(:, :, b), jD_h(:, :, a, ispin), temp_mat, 'N', 'N')
+            djvk(:, :, b, a, ispin) = djvk(:, :, b, a, ispin) + temp_mat
+            call utility_zgemm_new(jD_h(:, :, a, ispin), HH_da(:, :, b), temp_mat, 'N', 'N')
+            djvk(:, :, b, a, ispin) = djvk(:, :, b, a, ispin) - temp_mat
+          enddo
+        enddo
+      enddo
+
+      ! Compute I_mn matrix elements
+      ! loop on initial and final bands
+      do n = 1, num_wann
+        do m = 1, num_wann
+          ! cycle diagonal matrix elements and bands above the maximum
+          if (n == m) cycle
+          if (eig(m) > kubo_eigval_max .or. eig(n) > kubo_eigval_max) cycle
+          ! setup T=0 occupation factors
+          occ_fac = occ(m) - occ(n)
+          if (abs(occ_fac) < 1e-10) cycle
+
+          ! TODO: Add first and second terms (Drude, Berry curvature dipole)
+          !       These terms are zero in insulators.
+
+          ! Third term: 1 / (omega + e_mn)
+          ! I_mn(a, s, b, c) = (occ(m) - occ(n)) / (eig(m) - eig(n))**2 *
+          !  (HH_da(n, m, b) * djvk(m, n, c, a, s) + djvk(n, m, b, a, s) * HH_da(m, n, c)
+          !   - 2 * delta_jvk(m, n, a, s) * HH_da(n, m, b) * HH_da(m, n, c) / (eig(m) - eig(n)))
+          do c = 1, 3
+            do b = 1, 3
+              I_fermi_3_all(:, :, b, c, m, n, idelta) &
+              = HH_da(n, m, b) * djvk(m, n, c, :, :) &
+              + djvk(n, m, b, :, :) * HH_da(m, n, c) &
+              - 2.d0 * delta_jvk(m, n, :, :) * HH_da(n, m, b) &
+                * HH_da(m, n, c) / (eig(m) - eig(n))
+            enddo
+          enddo
+          I_fermi_3_all(:, :, :, :, m, n, idelta) &
+          = I_fermi_3_all(:, :, :, :, m, n, idelta) * occ_fac / (eig(m) - eig(n))**2
+
+          ! Fourth term: 1 / (omega + e_mn)**2
+          ! I_mn(a, ispin, b, c) = -(occ(m) - occ(n)) * delta_jvk(m, n, a, s)
+          !                      * vk(n, m, b) * vk(m, n, c) / (eig(m) - eig(n))**2
+          do c = 1, 3
+            do b = 1, 3
+              I_fermi_4_all(:, :, b, c, m, n, idelta) = -delta_jvk(m, n, :, :) * HH_da(n, m, b) * HH_da(m, n, c)
+            enddo
+          enddo
+          I_fermi_4_all(:, :, :, :, m, n, idelta) &
+            = I_fermi_4_all(:, :, :, :, m, n, idelta) * occ_fac / (eig(m) - eig(n))**2
+
+        enddo ! m
+      enddo ! n
+
+    enddo ! idelta
+
+    if (timing_level > 2 .and. on_root) call io_stopwatch('berry_nlspin_tetra: mel', 2)
+
+    ! setup for frequency-related quantities
+    omega = real(kubo_freq_list(:), dp)
+    wmin = omega(1)
+    wmax = omega(kubo_nfreq)
+    wstep = omega(2) - omega(1)
+
+    ! Fermi surface contribution: itype = 3
+    itype = 3
+
+    if (timing_level > 2 .and. on_root) call io_stopwatch('berry_nlspin_tetra: fermi', 1)
+
+    use_tetra = .false.
+
+    ! Ordinary grid for m, n far from resonance: |omega + e_mn| > 10 * eta_smr
+    eig = eigs(:, 9)
+    occ = occs(:, 9)
+
+    ! loop on initial and final bands
+    do n = 1, num_wann
+      do m = 1, num_wann
+        ! cycle diagonal matrix elements and bands above the maximum
+        if (n == m) cycle
+        if (eig(m) > kubo_eigval_max .or. eig(n) > kubo_eigval_max) cycle
+        ! setup T=0 occupation factors
+        occ_fac = occ(m) - occ(n)
+        if (abs(occ_fac) < 1e-10) cycle
+
+        eta_smr = kubo_smr_fixed_en_width
+
+        delta = eig(m) - eig(n) + omega
+
+        if (minval(abs(delta)) < jml_tetra_cutoff * eta_smr) then
+          ! Use tetrahedron interpolation
+          use_tetra(m, n) = .true.
+          cycle
+        else
+          ! Use ordinary grid (i.e. no tetrahedron interpolation)
+          use_tetra(m, n) = .false.
+        endif
+
+        I_mn_3 = I_fermi_3_all(:, :, :, :, m, n, 9)
+        I_mn_4 = I_fermi_4_all(:, :, :, :, m, n, 9)
+
+        ! TODO: Add first and second terms (Drude, Berry curvature dipole)
+        !       These terms are zero in insulators.
+
+        ! Third term: 1 / (omega + e_mn)
+        ! Add I_mn_3 * (w+e_mn) / ((w+e_mn)**2 + eta_smr**2)
+        omega_fac = delta / (delta**2 + eta_smr**2)
+        call ZGERU(108, kubo_nfreq, cmplx_1, I_mn_3, 1, omega_fac, 1, &
+            nlspin_k_list(:, :, :, :, :, itype), 108)
+
+        ! Fourth term: 1 / (omega + e_mn)**2
+        ! Add I_mn_4 * ((w+e_mn)**2 - eta_smr**2) / ((w+e_mn)**2 + eta_smr**2)**2
+        omega_fac = (delta**2 - eta_smr**2) / (delta**2 + eta_smr**2)**2
+        call ZGERU(108, kubo_nfreq, cmplx_1, I_mn_4, 1, omega_fac, 1, &
+            nlspin_k_list(:, :, :, :, :, itype), 108)
+
+      enddo ! bands
+    enddo ! bands
+
+    if (timing_level > 2 .and. on_root) call io_stopwatch('berry_nlspin_tetra: fermi', 2)
+
+    if (timing_level > 2 .and. on_root) call io_stopwatch('berry_nlspin_tetra: fermi_tetra', 1)
+
+    ! loop on interpolated k points
+    do ik_tetra = 0, PRODUCT(tetra_nk) - 1
+
+      fac = 1.d0 / real(PRODUCT(tetra_nk), dp)
+
+      ! Setup factors for trilinear interpolation
+      loop_ik(1) = ik_tetra / (tetra_nk(2)*tetra_nk(3))
+      loop_ik(2) = (ik_tetra - loop_ik(1)*(tetra_nk(2)*tetra_nk(3))) / tetra_nk(3)
+      loop_ik(3) = ik_tetra - loop_ik(1)*(tetra_nk(2)*tetra_nk(3)) - loop_ik(2)*tetra_nk(3)
+      dk = real(loop_ik, dp) / real(tetra_nk, dp)
+      dk = dk + 0.5_dp / real(tetra_nk, dp)
+
+      fac_tetra = 0.d0
+      fac_tetra(1) = (1.d0 - dk(1)) * (1.d0 - dk(2)) * (1.d0 - dk(3))
+      fac_tetra(2) = dk(1) * (1.d0 - dk(2)) * (1.d0 - dk(3))
+      fac_tetra(3) = (1.d0 - dk(1)) * dk(2) * (1.d0 - dk(3))
+      fac_tetra(4) = dk(1) * dk(2) * (1.d0 - dk(3))
+      fac_tetra(5) = (1.d0 - dk(1)) * (1.d0 - dk(2)) * dk(3)
+      fac_tetra(6) = dk(1) * (1.d0 - dk(2)) * dk(3)
+      fac_tetra(7) = (1.d0 - dk(1)) * dk(2) * dk(3)
+      fac_tetra(8) = dk(1) * dk(2) * dk(3)
+
+      ! Trilinear interpolation of energy
+      eig = 0.d0
+      do idelta = 1, 8
+        eig = eig + eigs(:, idelta) * fac_tetra(idelta)
+      enddo
+
+      ! loop on initial and final bands
+      do n = 1, num_wann
+        do m = 1, num_wann
+          ! cycle if ordinary grid is used
+          if (.not. use_tetra(m, n)) cycle
+
+          ! cycle diagonal matrix elements and bands above the maximum
+          if (n == m) cycle
+          if (eigs(m, 9) > kubo_eigval_max .or. eigs(n, 9) > kubo_eigval_max) cycle
+          if (abs(occs(m, 9) - occs(n, 9)) < 1e-10) cycle
+
+          eta_smr = kubo_smr_fixed_en_width
+
+          ! TODO: Add first and second terms (Drude, Berry curvature dipole)
+          !       These terms are zero in insulators.
+
+          ! Trilinear interpolation of I_mn matrix elements
+          I_mn_3 = cmplx_0
+          I_mn_4 = cmplx_0
+          do idelta = 1, 8
+            I_mn_3 = I_mn_3 + I_fermi_3_all(:, :, :, :, m, n, idelta) * fac_tetra(idelta)
+            I_mn_4 = I_mn_4 + I_fermi_4_all(:, :, :, :, m, n, idelta) * fac_tetra(idelta)
+          enddo
+
+          delta = eig(m) - eig(n) + omega
+
+          ! Add I_mn_3 * (w+e_mn) / ((w+e_mn)**2 + eta_smr**2)
+          omega_fac = delta / (delta**2 + eta_smr**2)
+          call ZGERU(108, kubo_nfreq, fac, I_mn_3, 1, omega_fac, 1, &
+              nlspin_k_list(:, :, :, :, :, itype), 108)
+
+          ! Add I_mn_4 * ((w+e_mn)**2 - eta_smr**2) / ((w+e_mn)**2 + eta_smr**2)**2
+          omega_fac = (delta**2 - eta_smr**2) / (delta**2 + eta_smr**2)**2
+          call ZGERU(108, kubo_nfreq, fac, I_mn_4, 1, omega_fac, 1, &
+              nlspin_k_list(:, :, :, :, :, itype), 108)
+
+        enddo ! bands
+      enddo ! bands
+    enddo ! ik_tetra
+
+    if (timing_level > 2 .and. on_root) call io_stopwatch('berry_nlspin_tetra: fermi_tetra', 2)
+
+  end subroutine berry_get_nlspin_klist_tetra
 
 ! BEGIN JML perturbed Wannier functions -----------------------------------
   subroutine pwf_jml_get_omegak(kpt, UU, omega_k, delhh_svel, delhh_vel, alpha, beta, gamma)

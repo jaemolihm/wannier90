@@ -506,6 +506,9 @@ contains
     call comms_bcast(dis_froz_max, 1)
     call comms_bcast(jml_diagonal_tb, 1)
     call comms_bcast(jml_debug_SS_R_zero, 1)
+    call comms_bcast(jml_nlspin_tetra, 1)
+    call comms_bcast(jml_tetra_nk, 1)
+    call comms_bcast(jml_tetra_cutoff, 1)
     ! END JML
 
   end subroutine pw90common_wanint_param_dist

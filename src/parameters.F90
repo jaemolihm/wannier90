@@ -232,6 +232,9 @@ module w90_parameters
   real(kind=dp), public, save :: jml_temperature
   logical, public, save :: jml_diagonal_tb
   logical, public, save :: jml_debug_SS_R_zero
+  logical, public, save :: jml_nlspin_tetra
+  integer, public, save :: jml_tetra_nk
+  real(kind=dp), public, save :: jml_tetra_cutoff
   ! END JML
 
   logical, public, save :: gyrotropic
@@ -1372,6 +1375,14 @@ contains
     call param_get_keyword('jml_diagonal_tb', found, l_value=jml_diagonal_tb)
     jml_debug_SS_R_zero = .false.
     call param_get_keyword('jml_debug_ss_r_zero', found, l_value=jml_debug_SS_R_zero)
+    jml_nlspin_tetra = .false.
+    call param_get_keyword('jml_nlspin_tetra', found, l_value=jml_nlspin_tetra)
+    jml_tetra_nk = 1
+    call param_get_keyword('jml_tetra_nk', found, i_value=jml_tetra_nk)
+    if (jml_nlspin_tetra .and. (.not. found)) &
+      call io_error('Error: jml_tetra_nk must be specified to use jml_nlspin_tetra')
+    jml_tetra_cutoff = 10.d0
+    call param_get_keyword('jml_tetra_cutoff', found, r_value=jml_tetra_cutoff)
     ! END JML
 
     spin_moment = .false.
@@ -6507,6 +6518,9 @@ contains
     call comms_bcast(jml_temperature, 1)
     call comms_bcast(jml_diagonal_tb, 1)
     call comms_bcast(jml_debug_SS_R_zero, 1)
+    call comms_bcast(jml_nlspin_tetra, 1)
+    call comms_bcast(jml_tetra_nk, 1)
+    call comms_bcast(jml_tetra_cutoff, 1)
     ! END JML
 
   end subroutine param_dist

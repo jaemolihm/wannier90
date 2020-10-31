@@ -1973,9 +1973,9 @@ contains
         sum_HD = cmplx_0
         do a = 1, 3
           do c = 1, 3
-            ! Note that we substract diagonal elements in AA_bar and
+            ! Note that we subtract diagonal elements in AA_bar and
             ! HH_da_bar to match the convention in IATS18
-            ! (diagonals in D_h are automatically zero, so we do not substract them)
+            ! (diagonals in D_h are automatically zero, so we do not subtract them)
             sum_AD(c, a) = (utility_zdotu(AA_bar(n, :, c), D_h(:, m, a)) - AA_bar(n, n, c)*D_h(n, m, a)) &
                            - (utility_zdotu(D_h(n, :, a), AA_bar(:, m, c)) - D_h(n, m, a)*AA_bar(m, m, c))
             sum_HD(c, a) = (utility_zdotu(HH_da_bar(n, :, c), D_h(:, m, a)) - HH_da_bar(n, n, c)*D_h(n, m, a)) &

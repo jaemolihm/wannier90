@@ -2408,7 +2408,7 @@ contains
         eta_smr = kubo_smr_fixed_en_width
 
         ! TODO: Add first and second terms (Drude, Berry curvature dipole)
-        !       These terms are zero in insulators and cold semiconductors.
+        !       These terms are zero in insulators.
 
         ! Third term: 1 / (omega + e_mn)
         ! I_mn(a, s, b, c) = (occ(m) - occ(n)) / (eig(m) - eig(n))**2 *
@@ -2425,7 +2425,7 @@ contains
         enddo
         I_mn = I_mn * occ_fac / (eig(m) - eig(n))**2
 
-        ! Add I_mn * ((w+e_mn)**2 - eta_smr**2) / ((w+e_mn)**2 + eta_smr**2)**2
+        ! Add I_mn * (w+e_mn) / ((w+e_mn)**2 + eta_smr**2)
         delta = eig(m) - eig(n) + omega
         omega_fac = delta / (delta**2 + eta_smr**2)
         call ZGERU(108, kubo_nfreq, cmplx_1, I_mn, 1, omega_fac, 1, &

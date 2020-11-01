@@ -1038,14 +1038,14 @@ contains
 
           OO_da(i, j, a) = OO_da(i, j, a) &
           + cmplx_i * OO(i, j) * wannier_centres_diff(a, i, j)
-        enddo ! j
-      enddo ! i
+        enddo ! i
+      enddo ! j
     enddo ! a
 
     do b = 1, 3
       do a = 1, 3
-        do i = 1, num_wann
-          do j = 1, num_wann
+        do j = 1, num_wann
+          do i = 1, num_wann
             OO_dadb(i, j, a, b) = OO_dadb(i, j, a, b) &
             * CONJG(phase_fac_centres(i)) * phase_fac_centres(j)
 
@@ -1053,8 +1053,8 @@ contains
             + cmplx_i * OO_da(i, j, b) * wannier_centres_diff(a, i, j) &
             + cmplx_i * OO_da(i, j, a) * wannier_centres_diff(b, i, j) &
             + OO(i, j) * wannier_centres_diff(a, i, j) * wannier_centres_diff(b, i, j)
-          enddo ! j
-        enddo ! i
+          enddo ! i
+        enddo ! j
       enddo ! a
     enddo ! b
 

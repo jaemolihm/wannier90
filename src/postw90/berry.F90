@@ -2509,7 +2509,8 @@ contains
     complex(kind=dp), allocatable :: jvk(:, :, :, :), jwk(:, :, :, :, :), &
       diag_jvk(:, :, :), delta_jvk(:, :, :, :), djvk(:, :, :, :, :), jD_h(:, :, :, :)
     complex(kind=dp), allocatable :: temp_mat(:, :)
-    complex(kind=dp), allocatable :: I_fermi_3_all(:, :, :, :, :, :, :), I_fermi_4_all(:, :, :, :, :, :, :)
+    complex(kind=dp), allocatable :: I_fermi_3_all(:, :, :, :, :, :, :), &
+      I_fermi_4_all(:, :, :, :, :, :, :), I_inj_all(:, :, :, :, :, :, :)
     real(kind=dp), allocatable    :: eig(:)
     real(kind=dp), allocatable    :: occ(:)
     real(kind=dp), allocatable :: eigs(:, :), occs(:, :)
@@ -2518,7 +2519,7 @@ contains
     logical :: tb_conv
     real(kind=dp) :: kpt_new(3), kpt_delta(3, 9)
     complex(kind=dp)              :: sum_AD(3, 3), sum_HD(3, 3), r_mn(3), gen_r_nm(3), &
-      omega_fac(kubo_nfreq), I_mn_3(3, 4, 3, 3), I_mn_4(3, 4, 3, 3)
+      omega_fac(kubo_nfreq), I_mn_3(3, 4, 3, 3), I_mn_4(3, 4, 3, 3), I_mn_inj(3, 4, 3, 3)
     integer                       :: a, b, c, bc, n, m, istart, iend, alpha, beta, ispin, itype, idelta
     real(kind=dp)                 :: omega(kubo_nfreq), delta(kubo_nfreq), joint_level_spacing, &
                                      eta_smr, Delta_k, vdum(3), occ_fac, wstep, wmin, wmax, deltaE
@@ -2542,6 +2543,7 @@ contains
     allocate (jD_h(num_wann, num_wann, 3, 4))
     allocate (djvk(num_wann, num_wann, 3, 3, 4))
     allocate (temp_mat(num_wann, num_wann))
+    allocate (I_inj_all(3, 4, 3, 3, num_wann, num_wann, 9))
     allocate (I_fermi_3_all(3, 4, 3, 3, num_wann, num_wann, 9))
     allocate (I_fermi_4_all(3, 4, 3, 3, num_wann, num_wann, 9))
     allocate (eigs(num_wann, 9))
@@ -2584,6 +2586,7 @@ contains
     kpt_delta(:, 9) = 0.d0
 
     ! Compute matrix elements at 8 k points on the vertices of the cube
+    I_inj_all = cmplx_0
     I_fermi_3_all = cmplx_0
     I_fermi_4_all = cmplx_0
 
@@ -2715,6 +2718,17 @@ contains
           occ_fac = occ(m) - occ(n)
           if (abs(occ_fac) < 1e-10) cycle
 
+          ! Injection current matrix element
+          ! I_mn(a, ispin, b, c) = - (occ(m) - occ(n)) * delta_jvk(m, n, a, ispin)
+          !                      * HH_da(m, n, b) * HH_da(n, m, c)
+          do c = 1, 3
+            do b = 1, 3
+              I_inj_all(:, :, b, c, m, n, idelta) = -delta_jvk(m, n, :, :) * HH_da(m, n, b) * HH_da(n, m, c)
+            enddo
+          enddo
+          I_inj_all(:, :, :, :, m, n, idelta) &
+          = I_inj_all(:, :, :, :, m, n, idelta) * occ_fac
+
           ! TODO: Add first and second terms (Drude, Berry curvature dipole)
           !       These terms are zero in insulators.
 
@@ -2758,9 +2772,6 @@ contains
     wmax = omega(kubo_nfreq)
     wstep = omega(2) - omega(1)
 
-    ! Fermi surface contribution: itype = 3
-    itype = 3
-
     if (timing_level > 2 .and. on_root) call io_stopwatch('berry_nlspin_tetra: fermi', 1)
 
     use_tetra = .false.
@@ -2791,6 +2802,34 @@ contains
           ! Use ordinary grid (i.e. no tetrahedron interpolation)
           use_tetra(m, n) = .false.
         endif
+
+        ! Injection current: itype = 2
+        itype = 2
+
+        ! restrict to energy window spanning [-sc_w_thr*eta_smr,+sc_w_thr*eta_smr]
+        ! outside this range, the two delta functions are virtually zero
+        if ((eig(m) - eig(n) + wmin <= sc_w_thr*eta_smr) .and. &
+            (eig(m) - eig(n) + wmax >= -sc_w_thr*eta_smr)) then
+
+          I_mn_inj = I_inj_all(:, :, :, :, m, n, 9)
+
+          ! compute delta(E_nm - w) = delta(E_mn + w)
+          ! choose energy window spanning [-sc_w_thr*eta_smr,+sc_w_thr*eta_smr]
+          istart = max(int((eig(n) - eig(m) - sc_w_thr*eta_smr - wmin)/wstep + 1), 1)
+          iend = min(int((eig(n) - eig(m) + sc_w_thr*eta_smr - wmin)/wstep + 1), kubo_nfreq)
+          ! multiply matrix elements with delta function for the relevant frequencies
+          if (istart <= iend) then
+            omega_fac = cmplx_0
+            omega_fac(istart:iend) = &
+              utility_w0gauss_vec(delta(istart:iend)/eta_smr, kubo_smr_index)/eta_smr
+            call ZGERU(108, iend - istart + 1, cmplx_1, I_mn_inj, 1, omega_fac(istart:iend), 1, &
+              nlspin_k_list(:, :, :, :, istart:iend, itype), 108)
+          endif
+
+        endif ! energy window
+
+        ! Fermi-surface contribution: itype = 3
+        itype = 3
 
         I_mn_3 = I_fermi_3_all(:, :, :, :, m, n, 9)
         I_mn_4 = I_fermi_4_all(:, :, :, :, m, n, 9)
@@ -2858,6 +2897,40 @@ contains
 
           eta_smr = kubo_smr_fixed_en_width
 
+          delta = eig(m) - eig(n) + omega
+
+          ! Injection current: itype = 2
+          itype = 2
+
+          ! restrict to energy window spanning [-sc_w_thr*eta_smr,+sc_w_thr*eta_smr]
+          ! outside this range, the two delta functions are virtually zero
+          if ((eig(m) - eig(n) + wmin <= sc_w_thr*eta_smr) .and. &
+              (eig(m) - eig(n) + wmax >= -sc_w_thr*eta_smr)) then
+
+            ! Trilinear interpolation of I_mn matrix elements
+            I_mn_inj = cmplx_0
+            do idelta = 1, 8
+              I_mn_inj = I_mn_inj + I_inj_all(:, :, :, :, m, n, idelta) * fac_tetra(idelta)
+            enddo
+
+            ! compute delta(E_nm - w) = delta(E_mn + w)
+            ! choose energy window spanning [-sc_w_thr*eta_smr,+sc_w_thr*eta_smr]
+            istart = max(int((eig(n) - eig(m) - sc_w_thr*eta_smr - wmin)/wstep + 1), 1)
+            iend = min(int((eig(n) - eig(m) + sc_w_thr*eta_smr - wmin)/wstep + 1), kubo_nfreq)
+            ! multiply matrix elements with delta function for the relevant frequencies
+            if (istart <= iend) then
+              omega_fac = cmplx_0
+              omega_fac(istart:iend) = &
+                utility_w0gauss_vec(delta(istart:iend)/eta_smr, kubo_smr_index)/eta_smr
+              call ZGERU(108, iend - istart + 1, fac, I_mn_inj, 1, omega_fac(istart:iend), 1, &
+                nlspin_k_list(:, :, :, :, istart:iend, itype), 108)
+            endif
+
+          endif ! energy window
+
+          ! Fermi-surface contribution: itype = 3
+          itype = 3
+
           ! TODO: Add first and second terms (Drude, Berry curvature dipole)
           !       These terms are zero in insulators.
 
@@ -2868,8 +2941,6 @@ contains
             I_mn_3 = I_mn_3 + I_fermi_3_all(:, :, :, :, m, n, idelta) * fac_tetra(idelta)
             I_mn_4 = I_mn_4 + I_fermi_4_all(:, :, :, :, m, n, idelta) * fac_tetra(idelta)
           enddo
-
-          delta = eig(m) - eig(n) + omega
 
           ! Add I_mn_3 * (w+e_mn) / ((w+e_mn)**2 + eta_smr**2)
           omega_fac = delta / (delta**2 + eta_smr**2)

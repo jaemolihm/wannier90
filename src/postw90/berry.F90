@@ -2526,6 +2526,7 @@ contains
 
     integer :: ik_tetra, tetra_nk(3), loop_ik(3)
     real(kind=dp) :: dk(3), fac_tetra(8), fac
+    logical :: is_2d
 
     if (kubo_adpt_smr) call io_error('berry_get_nlspin_klist_tetra with kubo_adpt_smr = true not implemented')
 
@@ -2553,8 +2554,13 @@ contains
     ! Initialize shift current array at point k
     nlspin_k_list = cmplx_0
 
+    if (berry_kmesh(3) == 1) is_2d = .true.
+
     ! Size of subgrids for poor man's tetrahedron interpolation
     tetra_nk = (/ jml_tetra_nk, jml_tetra_nk, jml_tetra_nk /)
+    if (is_2d) then
+      tetra_nk = (/ jml_tetra_nk, jml_tetra_nk, 1 /)
+    endif
 
     tb_conv = .false.
     if (sc_phase_conv == 1) then
@@ -2585,6 +2591,20 @@ contains
     kpt_delta(3, :) = kpt_delta(3, :) - 0.5_dp / real(berry_kmesh(3), dp)
     kpt_delta(:, 9) = 0.d0
 
+    if (is_2d) then
+      kpt_delta(:, :) = 0.d0
+
+      kpt_delta(1, 2) = 1.0_dp / real(berry_kmesh(1), dp)
+      kpt_delta(1, 4) = 1.0_dp / real(berry_kmesh(1), dp)
+
+      kpt_delta(2, 3) = 1.0_dp / real(berry_kmesh(2), dp)
+      kpt_delta(2, 4) = 1.0_dp / real(berry_kmesh(2), dp)
+
+      kpt_delta(1, :) = kpt_delta(1, :) - 0.5_dp / real(berry_kmesh(1), dp)
+      kpt_delta(2, :) = kpt_delta(2, :) - 0.5_dp / real(berry_kmesh(2), dp)
+      kpt_delta(:, 9) = 0.d0
+    endif
+
     ! Compute matrix elements at 8 k points on the vertices of the cube
     I_inj_all = cmplx_0
     I_fermi_3_all = cmplx_0
@@ -2593,6 +2613,8 @@ contains
     if (timing_level > 2 .and. on_root) call io_stopwatch('berry_nlspin_tetra: mel', 1)
 
     do idelta = 1, 9
+      if (is_2d .and. idelta >= 5 .and. idelta <= 8) cycle
+
       kpt_new = kpt + kpt_delta(:, idelta)
 
       ! Gather W-gauge matrix objects
@@ -2877,6 +2899,14 @@ contains
       fac_tetra(6) = dk(1) * (1.d0 - dk(2)) * dk(3)
       fac_tetra(7) = (1.d0 - dk(1)) * dk(2) * dk(3)
       fac_tetra(8) = dk(1) * dk(2) * dk(3)
+
+      if (is_2d) then
+        fac_tetra = 0.d0
+        fac_tetra(1) = (1.d0 - dk(1)) * (1.d0 - dk(2))
+        fac_tetra(2) = dk(1) * (1.d0 - dk(2))
+        fac_tetra(3) = (1.d0 - dk(1)) * dk(2)
+        fac_tetra(4) = dk(1) * dk(2)
+      endif
 
       ! Trilinear interpolation of energy
       eig = 0.d0

@@ -2270,7 +2270,15 @@ contains
           do m = 1, num_wann
             if (n == m) cycle
             deltaE = eig(n) - eig(m)
-            jD_h(m, n, a, ispin) = jvk(m, n, a, ispin) * deltaE / (deltaE**2 + sc_eta**2)
+            if (sc_eta > 1.d-6) then
+              jD_h(m, n, a, ispin) = jvk(m, n, a, ispin) * deltaE / (deltaE**2 + sc_eta**2)
+            else
+              if (abs(deltaE) < 1.d-3) then
+                jD_h(m, n, a, ispin) = cmplx_0
+              else
+                jD_h(m, n, a, ispin) = jvk(m, n, a, ispin) / deltaE
+              endif
+            endif
           enddo
         enddo
       enddo ! a
@@ -2704,9 +2712,17 @@ contains
             do m = 1, num_wann
               if (n == m) cycle
               deltaE = eig(n) - eig(m)
-              jD_h(m, n, a, ispin) = jvk(m, n, a, ispin) * deltaE / (deltaE**2 + sc_eta**2)
-            enddo
-          enddo
+              if (sc_eta > 1.d-6) then
+                jD_h(m, n, a, ispin) = jvk(m, n, a, ispin) * deltaE / (deltaE**2 + sc_eta**2)
+              else
+                if (abs(deltaE) < 1.d-3) then
+                  jD_h(m, n, a, ispin) = cmplx_0
+                else
+                  jD_h(m, n, a, ispin) = jvk(m, n, a, ispin) / deltaE
+                endif ! deltaE
+              endif ! sc_eta
+            enddo ! m
+          enddo ! n
         enddo ! a
       enddo ! ispin
 

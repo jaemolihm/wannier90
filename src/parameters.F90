@@ -235,6 +235,7 @@ module w90_parameters
   logical, public, save :: jml_nlspin_tetra
   integer, public, save :: jml_tetra_nk
   real(kind=dp), public, save :: jml_tetra_cutoff
+  logical, public, save :: jml_shifted
   ! END JML
 
   logical, public, save :: gyrotropic
@@ -1383,6 +1384,8 @@ contains
       call io_error('Error: jml_tetra_nk must be specified to use jml_nlspin_tetra')
     jml_tetra_cutoff = 10.d0
     call param_get_keyword('jml_tetra_cutoff', found, r_value=jml_tetra_cutoff)
+    jml_shifted = .false.
+    call param_get_keyword('jml_shifted', found, l_value=jml_shifted)
     ! END JML
 
     spin_moment = .false.
@@ -6521,6 +6524,7 @@ contains
     call comms_bcast(jml_nlspin_tetra, 1)
     call comms_bcast(jml_tetra_nk, 1)
     call comms_bcast(jml_tetra_cutoff, 1)
+    call comms_bcast(jml_shifted, 1)
     ! END JML
 
   end subroutine param_dist

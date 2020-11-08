@@ -110,7 +110,7 @@ contains
       kubo_adpt_smr_max, kubo_smr_fixed_en_width, &
       scissors_shift, num_valence_bands, &
       shc_bandshift, shc_bandshift_firstband, shc_bandshift_energyshift, &
-      use_pwf_jml, spinors, jml_nlspin_tetra
+      use_pwf_jml, spinors, jml_nlspin_tetra, jml_shifted
     use w90_get_oper, only: get_HH_R, get_AA_R, get_BB_R, get_CC_R, &
       get_SS_R, get_SHC_R, get_vel_r_pwf_jml, get_omega_r_pwf_jml, &
       get_dsuru_r_pwf_jml, get_dvel_r_pwf_jml
@@ -594,7 +594,14 @@ contains
         kpt(1) = loop_x*db1
         kpt(2) = loop_y*db2
         kpt(3) = loop_z*db3
-
+        !
+        ! shifted grid
+        if (jml_shifted) then
+          kpt(1) = kpt(1) + db1 * 0.5_dp
+          kpt(2) = kpt(2) + db2 * 0.5_dp
+          kpt(3) = kpt(3) + db3 * 0.5_dp
+        endif
+        !
         ! ***BEGIN CODE BLOCK 1***
         !
         if (eval_ahc) then

@@ -580,6 +580,8 @@ contains
 
       ik = 0
       do loop_xyz = my_node_id, PRODUCT(berry_kmesh) - 1, num_nodes
+        call berry_print_progress(loop_xyz, my_node_id, PRODUCT(berry_kmesh) - 1, num_nodes)
+
         ik = ik + 1
 
         ! write(stdout,'(i8)', advance='no') loop_xyz / num_nodes + 1
@@ -666,8 +668,6 @@ contains
         end if
 
         if (eval_nlspin) then
-          call berry_print_progress(loop_xyz, my_node_id, PRODUCT(berry_kmesh) - 1, num_nodes)
-
           if (jml_nlspin_tetra) then
             call berry_get_nlspin_klist_tetra(kpt, nlspin_k_list, loop_xyz)
           else
@@ -685,7 +685,6 @@ contains
           ! than later calls due to the time spent on
           !   berry_get_shc_klist -> wham_get_eig_deleig ->
           !   pw90common_fourier_R_to_k -> ws_translate_dist
-          call berry_print_progress(loop_xyz, my_node_id, PRODUCT(berry_kmesh) - 1, num_nodes)
           if (.not. shc_freq_scan) then
             call berry_get_shc_klist(kpt, shc_k_fermi=shc_k_fermi)
             !check whether needs to tigger adpt kmesh or not.

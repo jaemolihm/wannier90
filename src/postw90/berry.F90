@@ -134,6 +134,9 @@ contains
     ! nonlinear spin current
     complex(kind=dp), allocatable :: nlspin_k_list(:, :, :, :, :, :)
     complex(kind=dp), allocatable :: nlspin_list(:, :, :, :, :, :)
+    ! injection current
+    complex(kind=dp), allocatable :: inj_k_list(:, :, :, :, :)
+    complex(kind=dp), allocatable :: inj_list(:, :, :, :, :)
     ! Complex optical conductivity, dividided into Hermitean and
     ! anti-Hermitean parts
     !
@@ -169,7 +172,7 @@ contains
                          file_unit, ik, nk
     character(len=80) :: file_name
     logical           :: eval_ahc, eval_morb, eval_kubo, not_scannable, eval_sc, eval_shc
-    logical :: eval_nlspin
+    logical :: eval_nlspin, eval_inj
     logical           :: ladpt_kmesh
     logical           :: ladpt(nfermi)
 
@@ -190,12 +193,14 @@ contains
     eval_sc = .false.
     eval_shc = .false.
     eval_nlspin = .false.
+    eval_inj = .false.
     if (index(berry_task, 'ahc') > 0) eval_ahc = .true.
     if (index(berry_task, 'morb') > 0) eval_morb = .true.
     if (index(berry_task, 'kubo') > 0) eval_kubo = .true.
     if (index(berry_task, 'sc') > 0) eval_sc = .true.
     if (index(berry_task, 'shc') > 0) eval_shc = .true.
     if (index(berry_task, 'nlspin') > 0) eval_nlspin = .true.
+    if (index(berry_task, 'inj') > 0) eval_inj = .true.
 
     ! if (eval_nlspin) then
     !   eval_sc = .true.
@@ -321,6 +326,17 @@ contains
       call get_SS_R
     endif
 
+    if (eval_inj) then
+      allocate (inj_k_list(3, 4, 3, 3, kubo_nfreq))
+      allocate (inj_list(3, 4, 3, 3, kubo_nfreq))
+      inj_k_list = 0.0_dp
+      inj_list = 0.0_dp
+
+      call get_HH_R
+      call get_AA_R
+      call get_SS_R
+    endif
+
     if (use_pwf_jml) then
       call get_vel_r_pwf_jml
       if (spinors .and. eval_shc) call get_omega_r_pwf_jml
@@ -370,6 +386,10 @@ contains
 
       if (eval_nlspin) then
         write (stdout, '(/,3x,a)') '* Nonlinear spin current'
+      endif
+
+      if (eval_inj) then
+        write (stdout, '(/,3x,a)') '* Charge and spin injection current'
       endif
 
       if (use_pwf_jml) then
@@ -676,6 +696,11 @@ contains
           nlspin_list = nlspin_list + nlspin_k_list * kweight
         end if
 
+        if (eval_inj) then
+          call berry_get_inj_klist(kpt, inj_k_list)
+          inj_list = inj_list + inj_k_list * kweight
+        end if
+
         !
         ! ***END CODE BLOCK 1***
 
@@ -814,6 +839,10 @@ contains
 
     if (eval_nlspin) then
       call comms_reduce(nlspin_list(1, 1, 1, 1, 1, 1), 3*4*3*3*3*kubo_nfreq, 'SUM')
+    end if
+
+    if (eval_inj) then
+      call comms_reduce(inj_list(1, 1, 1, 1, 1), 3*4*3*3*kubo_nfreq, 'SUM')
     end if
 
     if (on_root) then
@@ -1345,6 +1374,32 @@ contains
         close(666)
 
       endif ! eval_nlspin
+
+      if (eval_inj) then
+        ! -----------------------------!
+        ! Injection current
+        ! -----------------------------!
+
+        fac_nlspin_inj = cmplx_i * pi * elem_charge_SI**3 / (hbar_SI**2 * cell_volume)
+
+        inj_list = inj_list * fac_nlspin_inj
+
+        do ifreq = 1, kubo_nfreq
+          inj_list(:, :, :, :, ifreq) = inj_list(:, :, :, :, ifreq) / kubo_freq_list(ifreq)**2
+        enddo
+
+        inquire(iolength=ik) inj_list
+        open(666, file='inj_list.bin', form='unformatted', access='direct', recl=ik)
+        write(666, rec=1) inj_list
+        close(666)
+
+        inquire(iolength=ik) kubo_freq_list
+        open(666, file='kubo_freq_list.bin', form='unformatted', access='direct', recl=ik)
+        write(666, rec=1) kubo_freq_list
+        close(666)
+
+      endif ! eval_inj
+
 
     end if !on_root
 
@@ -3011,6 +3066,234 @@ contains
     if (timing_level > 2 .and. on_root) call io_stopwatch('berry_nlspin_tetra: fermi_tetra', 2)
 
   end subroutine berry_get_nlspin_klist_tetra
+
+  subroutine berry_get_inj_klist(kpt, inj_k_list)
+    !====================================================================!
+    !                                                                    !
+    !  Contribution from point k to the nonlinear injection current
+    !  Notation correspondence with IATS18:
+    !  AA_da_bar              <-->   \mathbbm{b}
+    !  AA_bar                 <-->   \mathbbm{a}
+    !  HH_dadb_bar            <-->   \mathbbm{w}
+    !  D_h(n,m)               <-->   \mathbbm{v}_{nm}/(E_{m}-E_{n})
+    !  sum_AD                 <-->   summatory of Eq. 32 IATS18
+    !  sum_HD                 <-->   summatory of Eq. 30 IATS18
+    !  eig_da(n)-eig_da(m)    <-->   \mathbbm{Delta}_{nm}
+    !                                                                    !
+    !====================================================================!
+
+    ! Arguments
+    !
+    use w90_constants, only: dp, cmplx_0, cmplx_i, cmplx_1
+    use w90_io, only: io_error
+    use w90_utility, only: utility_re_tr, utility_im_tr, utility_w0gauss, utility_w0gauss_vec, &
+    utility_diagonalize, utility_rotate_new, utility_zgemm_new
+    use w90_parameters, only: num_wann, kubo_nfreq, kubo_freq_list, fermi_energy_list, &
+      kubo_smr_index, berry_kmesh, kubo_adpt_smr_fac, &
+      kubo_adpt_smr_max, kubo_adpt_smr, kubo_eigval_max, &
+      kubo_smr_fixed_en_width, sc_phase_conv, sc_w_thr, use_pwf_jml, spinors, wanint_kpoint_file, &
+      sc_eta
+    use w90_postw90_common, only: pw90common_fourier_R_to_k_vec_dadb, &
+      pw90common_fourier_R_to_k_new_second_d, pw90common_get_occ, &
+      pw90common_kmesh_spacing, pw90common_fourier_R_to_k_vec_dadb_TB_conv, &
+      pw90common_fourier_R_to_k_vec, pw90common_fourier_R_to_k_new
+    use w90_wan_ham, only: wham_get_eig_UU_HH_JJlist, wham_get_occ_mat_list, wham_get_D_h, &
+      wham_get_eig_UU_HH_AA_sc, wham_get_eig_deleig, wham_get_D_h_P_value, &
+      wham_get_eig_deleig_TB_conv, wham_get_eig_UU_HH_AA_sc_TB_conv
+    use w90_get_oper, only: AA_R, HH_R, SS_R
+    ! Arguments
+    !
+    real(kind=dp), intent(in)                        :: kpt(3)
+    complex(kind=dp), intent(out), dimension(:, :, :, :, :) :: inj_k_list
+
+    complex(kind=dp), allocatable :: UU(:, :)
+    complex(kind=dp), allocatable :: AA(:, :, :)
+    complex(kind=dp), allocatable :: AA_da(:, :, :, :)
+    complex(kind=dp), allocatable :: HH_da(:, :, :)
+    complex(kind=dp), allocatable :: HH_dadb(:, :, :, :)
+    complex(kind=dp), allocatable :: HH(:, :)
+    complex(kind=dp), allocatable :: D_h(:, :, :)
+    complex(kind=dp), allocatable :: vel_k(:, :, :)
+    complex(kind=dp), allocatable :: S_k(:, :, :)
+    complex(kind=dp), allocatable :: jvk(:, :, :, :)
+    complex(kind=dp), allocatable :: delta_jvk(:, :, :, :)
+    complex(kind=dp), allocatable :: temp_mat(:, :)
+    real(kind=dp), allocatable    :: eig(:)
+    real(kind=dp), allocatable    :: eig_da(:, :)
+    real(kind=dp), allocatable    :: occ(:)
+
+    logical :: tb_conv
+    complex(kind=dp)              :: sum_AD(3, 3), sum_HD(3, 3), r_mn(3), v_mn(3)
+    integer                       :: a, b, c, bc, n, m, istart, iend, alpha, beta, ispin
+    real(kind=dp)                 :: omega(kubo_nfreq), delta(kubo_nfreq), joint_level_spacing, &
+                                     eta_smr, Delta_k, vdum(3), occ_fac, wstep, wmin, wmax
+    complex(kind=dp) :: I_mn(3, 4, 3, 3), omega_fac(kubo_nfreq)
+
+    allocate (UU(num_wann, num_wann))
+    allocate (AA(num_wann, num_wann, 3))
+    allocate (HH_da(num_wann, num_wann, 3))
+    allocate (AA_da(num_wann, num_wann, 3, 3))
+    allocate (HH_dadb(num_wann, num_wann, 3, 3))
+    allocate (HH(num_wann, num_wann))
+    allocate (D_h(num_wann, num_wann, 3))
+    allocate (eig(num_wann))
+    allocate (occ(num_wann))
+    allocate (eig_da(num_wann, 3))
+    allocate (vel_k(num_wann, num_wann, 3))
+    allocate (S_k(num_wann, num_wann, 3))
+    allocate (jvk(num_wann, num_wann, 3, 4))
+    allocate (delta_jvk(num_wann, num_wann, 3, 4))
+    allocate (temp_mat(num_wann, num_wann))
+
+    if (sc_phase_conv == 1) then
+      tb_conv = .true.
+    else
+      tb_conv = .false.
+    endif
+
+    ! Initialize shift current array at point k
+    inj_k_list = 0.d0
+
+    ! Gather W-gauge matrix objects !
+
+    ! choose the convention for the FT sums
+    if (sc_phase_conv .eq. 1) then ! use Wannier centres in the FT exponentials (so called TB convention)
+      ! get Hamiltonian and its first and second derivatives
+      ! Note that below we calculate the UU matrix--> we have to use the same UU from here on for
+      ! maintaining the gauge-covariance of the whole matrix element
+      call wham_get_eig_UU_HH_AA_sc_TB_conv(kpt, eig, UU, HH, HH_da, HH_dadb)
+      ! get position operator and its derivative
+      ! note that AA_da(:,:,a,b) \propto \sum_R exp(iRk)*iR_{b}*<0|r_{a}|R>
+      call pw90common_fourier_R_to_k_vec_dadb_TB_conv(kpt, AA_R, OO_da=AA, OO_dadb=AA_da)
+      ! get eigenvalues and their k-derivatives
+      call wham_get_eig_deleig_TB_conv(kpt, eig, eig_da, HH_da, UU)
+    elseif (sc_phase_conv .eq. 2) then ! do not use Wannier centres in the FT exponentials (usual W90 convention)
+      ! same as above
+      call wham_get_eig_UU_HH_AA_sc(kpt, eig, UU, HH, HH_da, HH_dadb)
+      call pw90common_fourier_R_to_k_vec_dadb(kpt, AA_R, OO_da=AA, OO_dadb=AA_da)
+      call wham_get_eig_deleig(kpt, eig, eig_da, HH, HH_da, UU)
+    end if
+
+    ! AA_da and HH_dadb are not used.
+
+    ! get electronic occupations
+    call pw90common_get_occ(eig, occ, fermi_energy_list(1))
+
+    ! Get spin matrix elements
+    call pw90common_fourier_R_to_k_vec(kpt, SS_R, OO_true=S_k, tb_conv=tb_conv)
+    do ispin = 1, 3
+      call utility_rotate_new(S_k(:, :, ispin), UU, num_wann)
+    enddo
+
+    ! calculate k-spacing in case of adaptive smearing
+    if (kubo_adpt_smr) Delta_k = pw90common_kmesh_spacing(berry_kmesh)
+
+    ! rotate quantities from W to H gauge (we follow wham_get_D_h for delHH_bar_i)
+    do a = 1, 3
+      ! Berry connection A
+      call utility_rotate_new(AA(:, :, a), UU, num_wann)
+      ! first derivative of Hamiltonian dH_da
+      call utility_rotate_new(HH_da(:, :, a), UU, num_wann)
+    enddo
+
+    ! Get velocity matrix (Eq. (31) WYSV06)
+    vel_k = cmplx_0
+    do a = 1, 3
+      do m = 1, num_wann
+        do n = 1, num_wann
+          vel_k(n, m, a) = HH_da(n, m, a) - cmplx_i * (eig(m) - eig(n)) * AA(n, m, a)
+        enddo
+      enddo
+    enddo
+
+    ! Compute spin-velocity matrices
+    ! ispin = 1, 2, 3: spin x, y, z
+    ! ispin = 4: charge
+    jvk = cmplx_0
+    do ispin = 1, 3
+      do a = 1, 3
+        call utility_zgemm_new(S_k(:, :, ispin), vel_k(:, :, a), temp_mat, 'N', 'N')
+        call utility_zgemm_new(vel_k(:, :, a), S_k(:, :, ispin), jvk(:, :, a, ispin), 'N', 'N')
+        jvk(:, :, a, ispin) = jvk(:, :, a, ispin) + temp_mat
+      enddo
+    enddo ! ispin
+    jvk = jvk / 2.0_dp
+
+    jvk(:, :, :, 4) = vel_k(:, :, :)
+
+    ! Compute diagonal velocity matrix elements
+    ! diag_jvk(m) = jvk(m, m)
+    ! delta_jvk(n, m) = jvk(n, n)- jvk(m, m)
+    do ispin = 1, 4
+      do a = 1, 3
+        do m = 1, num_wann
+          do n = 1, num_wann
+            delta_jvk(n, m, a, ispin) = jvk(n, n, a, ispin) - jvk(m, m, a, ispin)
+          enddo
+        enddo
+      enddo
+    enddo
+
+    ! setup for frequency-related quantities
+    omega = real(kubo_freq_list(:), dp)
+    wmin = omega(1)
+    wmax = omega(kubo_nfreq)
+    wstep = omega(2) - omega(1)
+
+    ! loop on initial and final bands
+    do n = 1, num_wann
+      do m = 1, num_wann
+        ! cycle diagonal matrix elements and bands above the maximum
+        if (n == m) cycle
+        if (eig(m) > kubo_eigval_max .or. eig(n) > kubo_eigval_max) cycle
+        ! setup T=0 occupation factors
+        occ_fac = occ(m) - occ(n)
+        if (abs(occ_fac) < 1e-10) cycle
+
+        ! set delta function smearing
+        if (kubo_adpt_smr) then
+          vdum(:) = eig_da(m, :) - eig_da(n, :)
+          joint_level_spacing = sqrt(dot_product(vdum(:), vdum(:)))*Delta_k
+          eta_smr = min(joint_level_spacing*kubo_adpt_smr_fac, &
+                        kubo_adpt_smr_max)
+        else
+          eta_smr = kubo_smr_fixed_en_width
+        endif
+
+        ! restrict to energy window spanning [-sc_w_thr*eta_smr,+sc_w_thr*eta_smr]
+        ! outside this range, the two delta functions are virtually zero
+        if ((eig(m) - eig(n) + wmin > +sc_w_thr*eta_smr) .or. &
+            (eig(m) - eig(n) + wmax < -sc_w_thr*eta_smr)) cycle
+
+        ! Injection current matrix element
+        ! I_mn(a, ispin, b, c) = - (occ(m) - occ(n)) * delta_jvk(m, n, a, ispin)
+        !                      * vel_k(m, n, b) * vel_k(n, m, c)
+        I_mn = cmplx_0
+        do c = 1, 3
+          do b = 1, 3
+            I_mn(:, :, b, c) = -delta_jvk(m, n, :, :) * vel_k(m, n, b) * vel_k(n, m, c)
+          enddo
+        enddo
+        I_mn = I_mn * occ_fac
+
+        ! compute delta(E_nm-w) = delta(E_mn+w)
+        ! choose energy window spanning [-sc_w_thr*eta_smr,+sc_w_thr*eta_smr]
+        istart = max(int((eig(n) - eig(m) - sc_w_thr*eta_smr - wmin)/wstep + 1), 1)
+        iend = min(int((eig(n) - eig(m) + sc_w_thr*eta_smr - wmin)/wstep + 1), kubo_nfreq)
+        ! multiply matrix elements with delta function for the relevant frequencies
+        if (istart <= iend) then
+          delta = 0.0
+          delta(istart:iend) = &
+            utility_w0gauss_vec((eig(m) - eig(n) + omega(istart:iend))/eta_smr, kubo_smr_index)/eta_smr
+          omega_fac = delta
+          call ZGERU(108, iend - istart + 1, cmplx_1, I_mn, 1, omega_fac(istart:iend), 1, &
+            inj_k_list(:, :, :, :, istart:iend), 108)
+        endif
+
+      enddo ! bands
+    enddo ! bands
+
+  end subroutine berry_get_inj_klist
 
 ! BEGIN JML perturbed Wannier functions -----------------------------------
   subroutine pwf_jml_get_omegak(kpt, UU, omega_k, delhh_svel, delhh_vel, alpha, beta, gamma)

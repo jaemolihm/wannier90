@@ -1188,7 +1188,8 @@ contains
     if (berry .and. index(berry_task, 'ahc') == 0 .and. index(berry_task, 'morb') == 0 &
         .and. index(berry_task, 'kubo') == 0 .and. index(berry_task, 'sc') == 0 &
         .and. index(berry_task, 'shc') == 0 &
-        .and. index(berry_task, 'nlspin') == 0) call io_error &
+        .and. index(berry_task, 'nlspin') == 0 &
+        .and. index(berry_task, 'inj') == 0) call io_error &
       ('Error: value of berry_task not recognised in param_read')
 
     ! Stepan

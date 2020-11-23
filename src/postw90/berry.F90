@@ -367,6 +367,14 @@ contains
         kpt(:) = int_kpts(:, loop_xyz)
         kweight = weight(loop_xyz)
         kweight_adpt = kweight/berry_curv_adpt_kmesh**3
+
+        ! print calculation progress, from 0%, 10%, ... to 100%
+        ! Note the 1st call will be much longer
+        ! than later calls due to the time spent on
+        !   berry_get_shc_klist -> wham_get_eig_deleig ->
+        !   pw90common_fourier_R_to_k -> ws_translate_dist
+        call berry_print_progress(loop_xyz, 1, num_int_kpts_on_node(my_node_id), 1)
+
         !               .
         ! ***BEGIN COPY OF CODE BLOCK 1***
         !
@@ -435,12 +443,6 @@ contains
         ! ***END COPY OF CODE BLOCK 1***
 
         if (eval_shc) then
-          ! print calculation progress, from 0%, 10%, ... to 100%
-          ! Note the 1st call to berry_get_shc_klist will be much longer
-          ! than later calls due to the time spent on
-          !   berry_get_shc_klist -> wham_get_eig_deleig ->
-          !   pw90common_fourier_R_to_k -> ws_translate_dist
-          call berry_print_progress(loop_xyz, 1, num_int_kpts_on_node(my_node_id), 1)
           if (.not. shc_freq_scan) then
             call berry_get_shc_klist(kpt, shc_k_fermi=shc_k_fermi)
             !check whether needs to tigger adpt kmesh or not.
@@ -499,6 +501,13 @@ contains
         kpt(1) = loop_x*db1
         kpt(2) = loop_y*db2
         kpt(3) = loop_z*db3
+
+        ! print calculation progress, from 0%, 10%, ... to 100%
+        ! Note the 1st call will be much longer
+        ! than later calls due to the time spent on
+        !   berry_get_shc_klist -> wham_get_eig_deleig ->
+        !   pw90common_fourier_R_to_k -> ws_translate_dist
+        call berry_print_progress(loop_xyz, my_node_id, PRODUCT(berry_kmesh) - 1, num_nodes)
 
         ! ***BEGIN CODE BLOCK 1***
         !
@@ -567,12 +576,6 @@ contains
         ! ***END CODE BLOCK 1***
 
         if (eval_shc) then
-          ! print calculation progress, from 0%, 10%, ... to 100%
-          ! Note the 1st call to berry_get_shc_klist will be much longer
-          ! than later calls due to the time spent on
-          !   berry_get_shc_klist -> wham_get_eig_deleig ->
-          !   pw90common_fourier_R_to_k -> ws_translate_dist
-          call berry_print_progress(loop_xyz, my_node_id, PRODUCT(berry_kmesh) - 1, num_nodes)
           if (.not. shc_freq_scan) then
             call berry_get_shc_klist(kpt, shc_k_fermi=shc_k_fermi)
             !check whether needs to tigger adpt kmesh or not.
@@ -2101,6 +2104,7 @@ contains
           end if
         end do
       end if
+      flush(stdout)
     end if ! on_root
 
   end subroutine berry_print_progress

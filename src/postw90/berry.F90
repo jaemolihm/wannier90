@@ -94,7 +94,7 @@ contains
     !============================================================!
 
     use w90_constants, only: dp, cmplx_0, cmplx_i, elem_charge_SI, hbar_SI, &
-      eV_au, bohr, pi, eV_seconds
+      eV_au, bohr, pi, eV_seconds, i64
     use w90_comms, only: on_root, num_nodes, my_node_id, comms_reduce
     use w90_io, only: io_error, stdout, io_file_unit, seedname, &
       io_stopwatch
@@ -114,6 +114,9 @@ contains
     use w90_get_oper, only: get_HH_R, get_AA_R, get_BB_R, get_CC_R, &
       get_SS_R, get_SHC_R, get_vel_r_pwf_jml, get_omega_r_pwf_jml, &
       get_dsuru_r_pwf_jml, get_dvel_r_pwf_jml
+
+    integer(kind=i64) :: num_kpts_tot
+    !! Total number of k points. Use 8-bit integer to allow large numbers.
 
     real(kind=dp), allocatable    :: adkpt(:, :)
 
@@ -167,9 +170,10 @@ contains
     complex(kind=dp) :: fac_nlspin_shift, fac_nlspin_inj, fac_nlspin_fermi
     real(kind=dp)     :: kweight, kweight_adpt, kpt(3), db1, db2, db3, &
                          fac, rdum, vdum(3)
-    integer           :: n, i, j, k, jk, ikpt, ifermi, ierr, loop_x, loop_y, loop_z, &
-                         loop_xyz, loop_adpt, adpt_counter_list(nfermi), ifreq, &
-                         file_unit, ik, nk
+    integer           :: n, i, j, k, jk, ikpt, ifermi, ierr, loop_adpt, &
+                         adpt_counter_list(nfermi), ifreq, &
+                         file_unit, nk
+    integer(kind=i64) :: loop_xyz, loop_x, loop_y, loop_z, ik
     character(len=80) :: file_name
     logical           :: eval_ahc, eval_morb, eval_kubo, not_scannable, eval_sc, eval_shc
     logical :: eval_nlspin, eval_inj
@@ -546,7 +550,7 @@ contains
           ! than later calls due to the time spent on
           !   berry_get_shc_klist -> wham_get_eig_deleig ->
           !   pw90common_fourier_R_to_k -> ws_translate_dist
-          call berry_print_progress(loop_xyz, 1, num_int_kpts_on_node(my_node_id), 1)
+          call berry_print_progress(loop_xyz, 1, INT(num_int_kpts_on_node(my_node_id), kind=i64), 1)
           if (.not. shc_freq_scan) then
             call berry_get_shc_klist(kpt, shc_k_fermi=shc_k_fermi)
             !check whether needs to tigger adpt kmesh or not.
@@ -596,11 +600,12 @@ contains
       kweight = db1*db2*db3
       kweight_adpt = kweight/berry_curv_adpt_kmesh**3
 
-      write(stdout, '(a, I8, a)') 'Loop over ', PRODUCT(berry_kmesh) / num_nodes, ' k points'
+      num_kpts_tot = PRODUCT(int(berry_kmesh, kind=i64))
+      write(stdout, '(a, I16, a)') 'Loop over ', num_kpts_tot / num_nodes, ' k points'
 
       ik = 0
-      do loop_xyz = my_node_id, PRODUCT(berry_kmesh) - 1, num_nodes
-        call berry_print_progress(loop_xyz, my_node_id, PRODUCT(berry_kmesh) - 1, num_nodes)
+      do loop_xyz = my_node_id, num_kpts_tot - 1, num_nodes
+        call berry_print_progress(loop_xyz, my_node_id, num_kpts_tot - 1, num_nodes)
 
         ik = ik + 1
 
@@ -1812,7 +1817,7 @@ contains
 
     ! Arguments
     !
-    use w90_constants, only: dp, cmplx_0, cmplx_i
+    use w90_constants, only: dp, cmplx_0, cmplx_i, i64
     use w90_utility, only: utility_re_tr, utility_im_tr, utility_w0gauss, utility_w0gauss_vec, &
     utility_diagonalize, utility_rotate_new
     use w90_parameters, only: num_wann, kubo_nfreq, kubo_freq_list, fermi_energy_list, &
@@ -1833,7 +1838,7 @@ contains
     !
     real(kind=dp), intent(in)                        :: kpt(3)
     real(kind=dp), intent(out), dimension(:, :, :)     :: sc_k_list
-    integer, intent(in) :: ik
+    integer(kind=i64), intent(in) :: ik
 
     complex(kind=dp), allocatable :: UU(:, :)
     complex(kind=dp), allocatable :: AA(:, :, :), AA_bar(:, :, :)
@@ -2178,7 +2183,7 @@ contains
 
     ! Arguments
     !
-    use w90_constants, only: dp, cmplx_0, cmplx_i, cmplx_1
+    use w90_constants, only: dp, cmplx_0, cmplx_i, cmplx_1, i64
     use w90_comms, only : on_root
     use w90_io, only: io_error, io_stopwatch
     ! use w90_utility, only: utility_re_tr, utility_im_tr, utility_w0gauss, utility_w0gauss_vec, &
@@ -2200,7 +2205,7 @@ contains
     !
     real(kind=dp), intent(in) :: kpt(3)
     complex(kind=dp), intent(out), dimension(:, :, :, :, :, :) :: nlspin_k_list
-    integer, intent(in) :: ik
+    integer(kind=i64), intent(in) :: ik
 
     complex(kind=dp), allocatable :: UU(:, :)
     complex(kind=dp), allocatable :: S_k(:, :, :)
@@ -2548,7 +2553,7 @@ contains
 
     ! Arguments
     !
-    use w90_constants, only: dp, cmplx_0, cmplx_i, cmplx_1
+    use w90_constants, only: dp, cmplx_0, cmplx_i, cmplx_1, i64
     use w90_comms, only : on_root
     use w90_io, only: io_error, io_stopwatch
     use w90_parameters, only: num_wann, kubo_nfreq, kubo_freq_list, fermi_energy_list, &
@@ -2568,7 +2573,7 @@ contains
     !
     real(kind=dp), intent(in) :: kpt(3)
     complex(kind=dp), intent(out), dimension(:, :, :, :, :, :) :: nlspin_k_list
-    integer, intent(in) :: ik
+    integer(kind=i64), intent(in) :: ik
 
     complex(kind=dp), allocatable :: UU(:, :)
     complex(kind=dp), allocatable :: S_k(:, :, :)
@@ -3692,13 +3697,15 @@ contains
     !============================================================!
     use w90_comms, only: on_root
     use w90_io, only: stdout, io_wallclocktime
+    use w90_constants, only: i64
 
-    integer, intent(in) :: loop_k, start_k, end_k, step_k
+    integer, intent(in) :: start_k, step_k
+    integer(kind=i64), intent(in) :: loop_k, end_k
 
     real(kind=dp) :: cur_time, finished
     real(kind=dp), save :: prev_time
-    integer :: i, j, n, last_k
-    logical, dimension(9) :: kmesh_processed = (/(.false., i=1, 9)/)
+    integer(kind=i64) :: i, j, n, last_k
+    logical, dimension(99) :: kmesh_processed = (/(.false., i=1, 99)/)
 
     if (on_root) then
       ! The last loop_k in the array start:step:end
@@ -3720,7 +3727,7 @@ contains
         write (stdout, '(5x,a,3x,f10.1,f10.1)') '100%', cur_time, cur_time - prev_time
         write (stdout, '(1x,a)') ''
       else
-        finished = 10.0_dp*real(loop_k - start_k + 1)/real(end_k - start_k + 1)
+        finished = 100.0_dp*real(loop_k - start_k + 1)/real(end_k - start_k + 1)
         do n = 1, size(kmesh_processed)
           if ((.not. kmesh_processed(n)) .and. (finished >= n)) then
             do i = n, size(kmesh_processed)
@@ -3730,7 +3737,7 @@ contains
               end if
             end do
             cur_time = io_wallclocktime()
-            write (stdout, '(5x,i2,a,3x,f10.1,f10.1)') j, '0%', cur_time, cur_time - prev_time
+            write (stdout, '(5x,i3,a,3x,f10.1,f10.1)') j, '%', cur_time, cur_time - prev_time
             prev_time = cur_time
             exit
           end if

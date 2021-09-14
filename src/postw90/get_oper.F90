@@ -1542,7 +1542,7 @@ contains
       num_bands, ndimwin, wb, bk, &
       have_disentangled, timing_level, &
       scissors_shift
-    use w90_postw90_common, only: nrpts, v_matrix
+    use w90_postw90_common, only: nrpts, v_matrix, nrpts_pw90
     use w90_io, only: stdout, io_error, io_stopwatch, io_file_unit, &
       seedname
     use w90_comms, only: on_root, comms_bcast
@@ -1552,6 +1552,7 @@ contains
     integer :: ipol
     integer, allocatable          :: num_states(:)
     complex(kind=dp), allocatable :: SBB_q(:, :, :, :, :)
+    complex(kind=dp), allocatable :: SBB_R_temp(:, :, :)
     complex(kind=dp), allocatable :: Ho_q_qb2(:, :, :)
     complex(kind=dp), allocatable :: H_q_qb2(:, :)
     real(kind=dp)                 :: c_real, c_img
@@ -1559,12 +1560,12 @@ contains
 
     if (timing_level > 1 .and. on_root) call io_stopwatch('get_oper: get_SBB_R', 1)
 
-    if (.not. allocated(BB_R)) then
-      allocate (SBB_R(num_wann, num_wann, nrpts, 3, 3))
-    else
+    if (allocated(SBB_R)) then
       if (timing_level > 1 .and. on_root) call io_stopwatch('get_oper: get_SBB_R', 2)
       return
     end if
+
+    allocate (SBB_R(num_wann, num_wann, nrpts_pw90, 3, 3))
 
     if (on_root) then
 
@@ -1574,6 +1575,7 @@ contains
       allocate (Ho_q_qb2(num_bands, num_bands, 3))
       allocate (H_q_qb2(num_wann, num_wann))
       allocate (SBB_q(num_wann, num_wann, num_kpts, 3, 3))
+      allocate (SBB_R_temp(num_wann, num_wann, nrpts_pw90))
 
       allocate (num_states(num_kpts))
       do ik = 1, num_kpts
@@ -1647,13 +1649,14 @@ contains
       close (sHu_in)
       do b = 1, 3
         do a = 1, 3
-          call fourier_q_to_R(SBB_q(:, :, :, a, b), SBB_R(:, :, :, a, b))
+          call fourier_q_to_R(SBB_q(:, :, :, a, b), SBB_R_temp)
+          call operator_wigner_setup(SBB_R_temp, SBB_R(:, :, :, a, b))
         enddo
       enddo
 
     endif !on_root
 
-    call comms_bcast(SBB_R(1, 1, 1, 1, 1), num_wann*num_wann*nrpts*3*3)
+    call comms_bcast(SBB_R(1, 1, 1, 1, 1), num_wann*num_wann*nrpts_pw90*3*3)
 
     if (timing_level > 1 .and. on_root) call io_stopwatch('get_oper: get_SBB_R', 2)
     return
@@ -1679,7 +1682,7 @@ contains
       num_bands, ndimwin, wb, bk, &
       have_disentangled, timing_level, &
       scissors_shift
-    use w90_postw90_common, only: nrpts, v_matrix
+    use w90_postw90_common, only: nrpts, v_matrix, nrpts_pw90
     use w90_io, only: stdout, io_error, io_stopwatch, io_file_unit, &
       seedname
     use w90_comms, only: on_root, comms_bcast, my_node_id
@@ -1689,6 +1692,7 @@ contains
     integer :: ipol
     integer, allocatable          :: num_states(:)
     complex(kind=dp), allocatable :: SAA_q(:, :, :, :, :)
+    complex(kind=dp), allocatable :: SAA_R_temp(:, :, :)
     complex(kind=dp), allocatable :: Ho_q_qb2(:, :, :)
     complex(kind=dp), allocatable :: H_q_qb2(:, :)
     real(kind=dp)                 :: c_real, c_img
@@ -1696,12 +1700,12 @@ contains
 
     if (timing_level > 1 .and. on_root) call io_stopwatch('get_oper: get_SAA_R', 1)
 
-    if (.not. allocated(BB_R)) then
-      allocate (SAA_R(num_wann, num_wann, nrpts, 3, 3))
-    else
+    if (allocated(SAA_R)) then
       if (timing_level > 1 .and. on_root) call io_stopwatch('get_oper: get_SAA_R', 2)
       return
     end if
+
+    allocate (SAA_R(num_wann, num_wann, nrpts_pw90, 3, 3))
 
     if (on_root) then
 
@@ -1711,6 +1715,7 @@ contains
       allocate (Ho_q_qb2(num_bands, num_bands, 3))
       allocate (H_q_qb2(num_wann, num_wann))
       allocate (SAA_q(num_wann, num_wann, num_kpts, 3, 3))
+      allocate (SAA_R_temp(num_wann, num_wann, nrpts_pw90))
 
       allocate (num_states(num_kpts))
       do ik = 1, num_kpts
@@ -1786,12 +1791,13 @@ contains
 
       do b = 1, 3
         do a = 1, 3
-          call fourier_q_to_R(SAA_q(:, :, :, a, b), SAA_R(:, :, :, a, b))
+          call fourier_q_to_R(SAA_q(:, :, :, a, b), SAA_R_temp)
+          call operator_wigner_setup(SAA_R_temp, SAA_R(:, :, :, a, b))
         enddo
       enddo
     endif !on_root
 
-    call comms_bcast(SAA_R(1, 1, 1, 1, 1), num_wann*num_wann*nrpts*3*3)
+    call comms_bcast(SAA_R(1, 1, 1, 1, 1), num_wann*num_wann*nrpts_pw90*3*3)
 
     if (timing_level > 1 .and. on_root) call io_stopwatch('get_oper: get_SAA_R', 2)
     return

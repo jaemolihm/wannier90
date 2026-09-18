@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### New library entry point `w90_is_mpi_build`
+
+The library API had no way to report whether `libwannier90` was built with MPI. `w90_set_comm` is
+not guarded by `W90_MPI`, so a serial build accepts a communicator and then ignores it, and
+`valid_communicator` returns `.true.` unconditionally in a serial build. A parallel code linked
+against a serial library therefore ran the whole Wannierisation on every rank, using only the data
+that rank held, with no error raised. `w90_is_mpi_build()` (Fortran `logical function`, C
+`bool w90_is_mpi_build(void)`) reports the build property; it takes no arguments and cannot fail,
+so it may be called before a library data object exists.
+
 ### New `write_ndegen_applied` keyword: self-contained real-space output files
 
 - `write_ndegen_applied` (default `.false.`) writes `seedname_hr.dat`, `seedname_r.dat` and
